@@ -1,0 +1,36 @@
+-- Copy to config/device_config.lua (not in git) and fill in the placeholders.
+return {
+  wifi = {
+    ssid = "<wifi-ssid>",
+    pwd = "<wifi-password>"
+    -- portal_after_sec = 180,  -- open the setup portal without an IP this long after boot; 0 disables
+  },
+  device = {
+    model = "smartex mx",
+    version = "<yyyy.mm>",
+    project_id = "<project-id>",
+    device_hash = "<device-hash>"
+  },
+  measurement = {
+    pulldown_resistance = 136,
+    interval_sec = 1800,
+    sensors = 16,
+    protective_earth = 0
+  },
+  control = {
+    -- gets every measurement and the portal setup (README: Control server)
+    url = "https://api.progeo.com/v1/device/{project_id}/sample/", -- {project_id}: device.project_id
+    token = "<token>", -- sent as "Authorization: Token <token>"; unset: no header
+    poll_sec = 14400, -- ask url .. "cc/" for commands at most this often; 0: never
+  },
+  portal = {
+    -- ssid = "Setup-<device-hash>",  -- name of the setup network
+    -- pwd = "<at-least-8-chars>",    -- WPA2 password of the setup network (default: open)
+    -- timeout_sec = 600
+  },
+  firmware = {
+    -- prebuilt firmware in firmware/<version>, used by the flash scripts;
+    -- remove to use the local build in dist/nodemcu-firmware
+    version = "v1.2.0-tls-lua53"
+  }
+}

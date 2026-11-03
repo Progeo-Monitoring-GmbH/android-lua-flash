@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A chip with a lightning bolt. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M36,36h36v36h-36z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,30h4v6h-4zM52,30h4v6h-4zM64,30h4v6h-4zM40,72h4v6h-4zM52,72h4v6h-4zM64,72h4v6h-4zM30,40h6v4h-6zM30,52h6v4h-6zM30,64h6v4h-6zM72,40h6v4h-6zM72,52h6v4h-6zM72,64h6v4h-6z" />
+    <path
+        android:fillColor="#0B5394"
+        android:pathData="M57,39l-12,17h8l-4,13l12,-18h-8z" />
+</vector>

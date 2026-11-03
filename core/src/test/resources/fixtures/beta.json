@@ -1,0 +1,21 @@
+{
+  "format": 1,
+  "channel": "beta",
+  "updated": "2026-11-03T13:47:01Z",
+  "min_app_version": 1,
+  "latest": "v1.2.0_fw-v1.2.0-tls-lua53",
+  "bundles": [
+    {
+      "id": "v1.2.0_fw-v1.2.0-tls-lua53",
+      "release": "v1.2.0",
+      "firmware": "v1.2.0-tls-lua53",
+      "config_schema": 1,
+      "url": "bundles/lua-wlan-v1.2.0_fw-v1.2.0-tls-lua53.zip",
+      "size": 470638,
+      "sha256": "2f8a2df3e27e3ac2c5f088984cd54e6b4c8badc68f909647c4ca0130fecd67a1",
+      "sig_url": "bundles/lua-wlan-v1.2.0_fw-v1.2.0-tls-lua53.zip.sig",
+      "created": "2026-11-02T19:40:21Z",
+      "notes": ""
+    }
+  ]
+}

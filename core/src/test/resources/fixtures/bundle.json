@@ -1,0 +1,57 @@
+{
+  "format": 1,
+  "bundle_id": "v1.2.0_fw-v1.2.0-tls-lua53",
+  "release": "v1.2.0",
+  "config_schema": 1,
+  "git_commit": "db8a944",
+  "created": "2026-11-02T19:40:21Z",
+  "firmware": {
+    "version": "v1.2.0-tls-lua53",
+    "lfs_size": "0x20000",
+    "segments": [
+      {
+        "address": "0x00000",
+        "file": "firmware/0x00000.bin",
+        "size": 30064,
+        "sha256": "f457be0e7ba3ab49ecbabef282093036f790965181d51d6384c0d3f675943305"
+      },
+      {
+        "address": "0x10000",
+        "file": "firmware/0x10000.bin",
+        "size": 606208,
+        "sha256": "e2643206cb5b54594148926019c60cba9e6612ea7126f941ac8109de9637bf04"
+      }
+    ]
+  },
+  "lfs": {
+    "file": "fs/lfs.img",
+    "size": 45309,
+    "sha256": "83e3a62e44d837ce7c414d8f9a979c1a0f5de1de5c39c0011da0725ab69f6d7b",
+    "modules": [
+      "Relais",
+      "connWLAN",
+      "control",
+      "display",
+      "logger",
+      "main",
+      "measurement",
+      "portal",
+      "webserver"
+    ]
+  },
+  "files": [
+    {
+      "path": "config/runtime_config.lua",
+      "file": "fs/config/runtime_config.lua",
+      "size": 342,
+      "sha256": "8d47067e110262fa9ff33f16ac72e9d74531d31a5a0f8dd01c4cbdc9a94d8239"
+    }
+  ],
+  "init": {
+    "path": "init.lua",
+    "file": "fs/init.lua",
+    "size": 997,
+    "sha256": "ab09bc1b0f14497c04d8535019352fb17fecd0cd6adae8b4688930cafa05a7e7"
+  },
+  "device_config_template": "templates/device_config.lua.template"
+}
