@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -17,8 +19,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
@@ -42,6 +47,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.progeo.luaflasher.core.FlasherException
+import com.progeo.luaflasher.core.config.LuaJson
 import com.progeo.luaflasher.data.Profile
 import com.progeo.luaflasher.data.ProfileExport
 import com.progeo.luaflasher.graph
@@ -49,6 +55,7 @@ import com.progeo.luaflasher.ui.MessageCard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonPrimitive
 
 private sealed interface PassAction {
     data class Export(val uri: Uri) : PassAction
@@ -56,7 +63,7 @@ private sealed interface PassAction {
 }
 
 @Composable
-fun ProfilesScreen(onEdit: (String?) -> Unit) {
+fun ProfilesScreen(onEdit: (String?) -> Unit, onFetch: () -> Unit, onFlash: (String) -> Unit) {
     val context = LocalContext.current
     val graph = context.graph
     val scope = rememberCoroutineScope()
@@ -81,12 +88,19 @@ fun ProfilesScreen(onEdit: (String?) -> Unit) {
             item { Text("Profiles", style = MaterialTheme.typography.headlineMedium) }
             item {
                 Text(
-                    "A profile holds the settings shared by all boards of a project. Secrets are encrypted on the phone.",
+                    "A profile is a complete device_config.lua. Read it from a controller over USB (named after its device hash) or create one; every value can be edited. Profiles are encrypted on the phone.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
+            item {
+                Button(onClick = onFetch, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.CloudDownload, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Read from controller")
+                }
+            }
             message?.let { (text, error) -> item { MessageCard(text, error) } }
-            if (profiles.isEmpty()) item { Text("No profiles yet. Add one before going on site.") }
+            if (profiles.isEmpty()) item { Text("No profiles yet. Read one from a controller or add one.") }
             items(profiles, key = { it.id }) { p ->
                 Card(
                     Modifier
@@ -96,13 +110,29 @@ fun ProfilesScreen(onEdit: (String?) -> Unit) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(p.name, style = MaterialTheme.typography.titleMedium)
+                            fun value(path: String) = (LuaJson.get(p.config, path) as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
                             val summary = listOfNotNull(
-                                p.values["device.project_id"]?.let { "project $it" },
-                                p.values["device.model"],
-                                p.values["wifi.ssid"]?.let { "Wi-Fi $it" },
+                                value("device.project_id")?.let { "project $it" },
+                                value("device.model"),
+                                value("wifi.ssid")?.let { "Wi-Fi $it" },
                             ).joinToString(" · ")
                             if (summary.isNotEmpty()) Text(summary, style = MaterialTheme.typography.bodySmall)
+                            p.boardReadAt?.let {
+                                Text(
+                                    "read from board · ${it.take(16).replace('T', ' ')}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                            p.source?.let { s ->
+                                Text(
+                                    "from controller · location ${s.locationId}" + (s.fetchedAt?.let { " · ${it.take(16).replace('T', ' ')}" } ?: ""),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
                         }
+                        IconButton(onClick = { onFlash(p.id) }) { Icon(Icons.Default.FlashOn, contentDescription = "Flash") }
                         IconButton(onClick = { confirmDelete = p }) { Icon(Icons.Default.Delete, contentDescription = "Delete") }
                     }
                 }
@@ -173,7 +203,7 @@ fun ProfilesScreen(onEdit: (String?) -> Unit) {
                                         }
                                         is PassAction.Import -> {
                                             val bytes = context.contentResolver.openInputStream(action.uri)!!.use { it.readBytes() }
-                                            val imported = ProfileExport.import(bytes, chars)
+                                            val imported = ProfileExport.import(bytes, chars, graph.fieldKind)
                                             graph.profiles.importAll(imported)
                                             "Imported ${imported.size} profile(s)." to false
                                         }

@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.progeo.luaflasher.core.bundle.BundleFormat
 import com.progeo.luaflasher.data.AppSettings
 import com.progeo.luaflasher.flash.FlashState
 import com.progeo.luaflasher.graph
@@ -93,7 +94,11 @@ fun HomeScreen(onFlash: () -> Unit, onBundles: () -> Unit) {
                         StatusLine(Icons.Default.CloudDownload, "No firmware on the phone yet. Connect to the internet and pull to sync.", StatusColors.warn)
                     }
                     if (missingLatest && channelLatest != null) {
-                        StatusLine(Icons.Default.CloudDownload, "Newer release available (${channelLatest.release}) — download before going on site", StatusColors.warn)
+                        if (channelLatest.configSchema > BundleFormat.SUPPORTED_CONFIG_SCHEMA) {
+                            StatusLine(Icons.Default.CloudDownload, "Release ${channelLatest.release} needs a newer version of this app. Update the app.", StatusColors.warn)
+                        } else {
+                            StatusLine(Icons.Default.CloudDownload, "Newer release available (${channelLatest.release}) — download before going on site", StatusColors.warn)
+                        }
                     }
                     if (sync.notPublished) {
                         Text("Nothing is released in the ${sync.channelName} channel yet.", style = MaterialTheme.typography.bodySmall)

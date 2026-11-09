@@ -92,8 +92,12 @@ object BundleFormat {
     /** Formats of channel files and bundle.json this app understands. */
     const val FORMAT = 1
 
-    /** Highest config_schema this app can write a device config for. */
-    const val SUPPORTED_CONFIG_SCHEMA = 1
+    /**
+     * Highest config_schema this app can write a device config for. The config editor and
+     * writer are driven by the bundle's template, so a schema that only adds fields works.
+     * 2 (bundle v1.0.0, fw v1.6.1): adds the optional `control.rpi` (true/false/unset).
+     */
+    const val SUPPORTED_CONFIG_SCHEMA = 2
 
     val json = Json {
         ignoreUnknownKeys = true

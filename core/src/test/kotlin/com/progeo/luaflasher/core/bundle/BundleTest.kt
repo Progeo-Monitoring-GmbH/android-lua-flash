@@ -150,7 +150,7 @@ class BundleTest {
     @Test
     fun `unknown format and newer config schema ask for an app update`() {
         assertFailsWith<AppTooOldException> { BundleValidator.validate(TestBundles.zip(TestBundles.entries(TestBundles.manifest(format = 2)))) }
-        assertFailsWith<AppTooOldException> { BundleValidator.validate(TestBundles.zip(TestBundles.entries(TestBundles.manifest(configSchema = 2)))) }
+        assertFailsWith<AppTooOldException> { BundleValidator.validate(TestBundles.zip(TestBundles.entries(TestBundles.manifest(configSchema = 3)))) }
     }
 
     @Test

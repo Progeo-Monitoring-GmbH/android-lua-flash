@@ -17,6 +17,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -25,6 +27,7 @@ import com.progeo.luaflasher.ui.bundles.BundlesScreen
 import com.progeo.luaflasher.ui.flash.FlashScreen
 import com.progeo.luaflasher.ui.home.HomeScreen
 import com.progeo.luaflasher.ui.monitor.MonitorScreen
+import com.progeo.luaflasher.ui.profiles.FetchConfigScreen
 import com.progeo.luaflasher.ui.profiles.ProfileEditorScreen
 import com.progeo.luaflasher.ui.profiles.ProfilesScreen
 import com.progeo.luaflasher.ui.settings.SettingsScreen
@@ -71,13 +74,34 @@ fun AppNavigation() {
                 HomeScreen(onFlash = { nav.navigate("flash") }, onBundles = { nav.navigate(Tab.BUNDLES.route) })
             }
             composable(Tab.BUNDLES.route) { BundlesScreen() }
-            composable(Tab.PROFILES.route) { ProfilesScreen(onEdit = { id -> nav.navigate("profile/${id ?: "new"}") }) }
+            composable(Tab.PROFILES.route) {
+                ProfilesScreen(
+                    onEdit = { id -> nav.navigate("profile/${id ?: "new"}") },
+                    onFetch = { nav.navigate("fetch") },
+                    onFlash = { id -> nav.navigate("flash?profile=$id") },
+                )
+            }
             composable("profile/{id}") { e ->
-                ProfileEditorScreen(id = e.arguments?.getString("id")?.takeIf { it != "new" }, onDone = { nav.popBackStack() })
+                ProfileEditorScreen(
+                    id = e.arguments?.getString("id")?.takeIf { it != "new" },
+                    onDone = { nav.popBackStack() },
+                    onFlash = { id -> nav.navigate("flash?profile=$id") { popUpTo(Tab.PROFILES.route) } },
+                )
+            }
+            composable("fetch") {
+                FetchConfigScreen(
+                    onBack = { nav.popBackStack() },
+                    onSaved = { id -> nav.navigate("profile/$id") { popUpTo(Tab.PROFILES.route) } },
+                )
             }
             composable(Tab.MONITOR.route) { MonitorScreen() }
             composable(Tab.SETTINGS.route) { SettingsScreen() }
-            composable("flash") { FlashScreen(onClose = { nav.popBackStack() }) }
+            composable(
+                "flash?profile={profile}",
+                arguments = listOf(navArgument("profile") { type = NavType.StringType; nullable = true; defaultValue = null }),
+            ) { e ->
+                FlashScreen(profileId = e.arguments?.getString("profile"), onClose = { nav.popBackStack() })
+            }
         }
     }
 }

@@ -13,6 +13,9 @@ Requirements: JDK 17+ (Android Studio's JBR works), Android SDK with platform 36
 ./gradlew test                 # JVM tests of :core and :app
 ```
 
+In VS Code: **Ctrl+Shift+B** runs *Android: Run on device* (install on the phone connected via adb,
+then start the app); *Terminal → Run Task… → Android: Build APK* builds the debug APK. See `.vscode/tasks.json`.
+
 The public signing keys come from `keys/firmware-signing.pub.json`; the build fails without it. Debug builds
 can add a local test key with `-PextraFirmwareKeys=<file>` (same JSON format), for bundles signed with
 `scripts/new_signing_key.ps1` and served from a local `dist/release-site/`.

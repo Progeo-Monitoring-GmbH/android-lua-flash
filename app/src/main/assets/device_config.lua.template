@@ -21,7 +21,8 @@ return {
     -- gets every measurement and the portal setup (README: Control server)
     url = "https://api.progeo.com/v1/device/{project_id}/sample/", -- {project_id}: device.project_id
     token = "<token>", -- sent as "Authorization: Token <token>"; unset: no header
-    poll_sec = 14400, -- ask url .. "cc/" for commands at most this often; 0: never
+    poll_sec = 14400, -- ask url .. "cc/" for commands at most this often; 0: never (maintenance mode: 15 s)
+    -- rpi = true, -- Raspberry Pi present, it asks the node: nothing goes to url; false: never; unset: autodetect
   },
   portal = {
     -- ssid = "Setup-<device-hash>",  -- name of the setup network

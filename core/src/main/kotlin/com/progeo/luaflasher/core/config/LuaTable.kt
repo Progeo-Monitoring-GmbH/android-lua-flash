@@ -1,6 +1,9 @@
 package com.progeo.luaflasher.core.config
 
-/** The Lua subset used by config files: `return { name = value, ... }` with nested tables. */
+/**
+ * The Lua subset used by config files: `return { name = value, ... }` with nested tables,
+ * lists (`{ 1, 2 }`) and `["key"] = value` fields. No expressions or function calls.
+ */
 sealed interface LuaValue {
     data class Str(val value: String) : LuaValue
     data class Num(val literal: String) : LuaValue
@@ -20,6 +23,8 @@ data class LuaField(
     val value: LuaValue,
     val commented: Boolean = false,
     val description: String? = null,
+    /** A list entry (`{ 1, 2 }`); [name] is its 1-based index. */
+    val positional: Boolean = false,
 ) {
     /** A template value such as "<wifi-ssid>" that must never be written to a device. */
     val isPlaceholder: Boolean get() = value is LuaValue.Str && PLACEHOLDER.containsMatchIn(value.value)
@@ -83,7 +88,7 @@ class LuaTableParser private constructor(private val src: String) {
                     while (pos < src.length && (src[pos].isLetterOrDigit() || src[pos] == '_')) pos++
                     tokens += Tok.Name(src.substring(start, pos), line)
                 }
-                c in "{}=,;" -> {
+                c in "{}=,;[]" -> {
                     tokens += Tok.Sym(c, line)
                     pos++
                 }
@@ -239,27 +244,51 @@ class LuaTableParser private constructor(private val src: String) {
             }
         }
 
+        var position = 0
         while (true) {
             absorbComments()
-            val tok = next()
-            when {
-                tok is Tok.Sym && tok.c == '}' -> return LuaValue.Table(fields)
-                tok is Tok.Name -> {
+            val tok = peek()
+            if (tok is Tok.Sym && tok.c == '}') {
+                next()
+                return LuaValue.Table(fields)
+            }
+            val field = when {
+                // name = value
+                tok is Tok.Name && tokens.getOrNull(t + 1).let { it is Tok.Sym && it.c == '=' } -> {
+                    next()
                     expectSym('=')
                     skipComments()
-                    val value = parseValue()
-                    fields += LuaField(tok.text, value)
-                    lastField = fields.size - 1
-                    lastFieldLine = tokens[t - 1].line
-                    absorbComments()
-                    val sep = peek()
-                    if (sep is Tok.Sym && (sep.c == ',' || sep.c == ';')) {
-                        next()
-                    } else if (!(sep is Tok.Sym && sep.c == '}')) {
-                        throw LuaParseException("expected ',' or '}'", sep.line)
-                    }
+                    LuaField(tok.text, parseValue())
                 }
-                else -> throw LuaParseException("expected a field name", tok.line)
+                // ["name"] = value / [3] = value
+                tok is Tok.Sym && tok.c == '[' -> {
+                    next()
+                    skipComments()
+                    val key = when (val k = parseValue()) {
+                        is LuaValue.Str -> k.value
+                        is LuaValue.Num -> k.literal
+                        else -> throw LuaParseException("unsupported key", tok.line)
+                    }
+                    expectSym(']')
+                    expectSym('=')
+                    skipComments()
+                    LuaField(key, parseValue())
+                }
+                // positional (list) value
+                else -> {
+                    position++
+                    LuaField(position.toString(), parseValue(), positional = true)
+                }
+            }
+            fields += field
+            lastField = fields.size - 1
+            lastFieldLine = tokens[t - 1].line
+            absorbComments()
+            val sep = peek()
+            if (sep is Tok.Sym && (sep.c == ',' || sep.c == ';')) {
+                next()
+            } else if (!(sep is Tok.Sym && sep.c == '}')) {
+                throw LuaParseException("expected ',' or '}'", sep.line)
             }
         }
     }

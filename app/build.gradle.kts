@@ -19,6 +19,9 @@ android {
         // Compared with min_app_version of the channel file.
         versionCode = 1
         versionName = "0.1.0"
+
+        // ProGeo backend for login and controller configs (API.md: not hard-coded in the code).
+        buildConfigField("String", "BACKEND_URL", "\"https://api.progeo.com/\"")
     }
 
     buildTypes {

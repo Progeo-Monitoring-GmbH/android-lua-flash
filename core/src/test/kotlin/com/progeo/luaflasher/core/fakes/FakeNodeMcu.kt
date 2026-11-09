@@ -2,7 +2,7 @@ package com.progeo.luaflasher.core.fakes
 
 import com.progeo.luaflasher.core.io.SerialPort
 import com.progeo.luaflasher.core.nodemcu.FileUploader
-import com.progeo.luaflasher.core.nodemcu.NodeMcuInstaller
+import com.progeo.luaflasher.core.nodemcu.NodeMcuFiles
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -20,6 +20,8 @@ class FakeNodeMcu(
     var luaVersion: String = "Lua 5.3 true",
     /** Answer of node.LFS.reload; null = success (restart). */
     var lfsReloadError: String? = null,
+    /** Like the real Lua 5.3 firmware: a successful reload raises "system restarting" before the reset. */
+    var lfsReloadRaisesRestarting: Boolean = true,
     /** NAK the upload block with this index (0-based) once. */
     var nakBlock: Int? = null,
     /** Silent: no power or wrong mode. */
@@ -38,6 +40,7 @@ class FakeNodeMcu(
     private var recvDefined = false
     private var hexDefined = false
     private var defining = false
+    private var bootAfterAnswer = false
 
     private enum class Mode { REPL, NAME, BLOCKS }
 
@@ -106,7 +109,7 @@ class FakeNodeMcu(
                 defining = true
                 prompt()
             }
-            text == NodeMcuInstaller.HEX_HELPER -> {
+            text == NodeMcuFiles.HEX_HELPER -> {
                 hexDefined = true
                 prompt()
             }
@@ -136,7 +139,11 @@ class FakeNodeMcu(
                 val result = evaluate(body) ?: return // null: the node restarted
                 result.printed.forEach { emit(it + "\r\n") }
                 emit("#R$n\t${result.ok}\t${result.value}\r\n")
-                prompt()
+                prompt() // the old interpreter's prompt still comes before a reset
+                if (bootAfterAnswer) {
+                    bootAfterAnswer = false
+                    boot()
+                }
             }
             else -> error("fake: unsupported line: $text")
         }
@@ -172,8 +179,13 @@ class FakeNodeMcu(
                 if (error != null) return Eval(true, error)
                 val image = files["lfs.img"] ?: return Eval(true, "lfs.img not found")
                 lfsModules = String(image, Charsets.ISO_8859_1).split(',').toSet()
-                boot()
-                null
+                if (lfsReloadRaisesRestarting) {
+                    bootAfterAnswer = true
+                    Eval(false, "stdin:1: system restarting")
+                } else {
+                    boot()
+                    null
+                }
             }
             body == "return node.LFS.get('main') ~= nil" -> ok(("main" in lfsModules).toString())
             body.startsWith("local f,err=loadfile(") -> {
@@ -185,10 +197,14 @@ class FakeNodeMcu(
                     else -> ok("$path:1: syntax error")
                 }
             }
+            body == "return type(_hx)" -> ok(if (hexDefined) "function" else "nil")
             body.startsWith("return _hx(") -> {
                 check(hexDefined) { "_hx not defined" }
-                val path = QUOTED.find(body)!!.groupValues[2]
-                ok(files[path]?.joinToString("") { "%02X".format(it) }.orEmpty())
+                val m = Regex("return _hx\\(\"([^\"]*)\",(\\d+),(\\d+)\\)").matchEntire(body) ?: error("fake: bad _hx call: $body")
+                val data = files[m.groupValues[1]] ?: return ok("")
+                val from = m.groupValues[2].toInt().coerceAtMost(data.size)
+                val to = (from + m.groupValues[3].toInt()).coerceAtMost(data.size)
+                ok(data.copyOfRange(from, to).joinToString("") { "%02X".format(it) })
             }
             removes.isNotEmpty() && body.replace(REMOVE, "").isBlank() -> {
                 removes.forEach { files.remove(it) }

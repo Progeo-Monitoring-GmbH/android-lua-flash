@@ -1,0 +1,72 @@
+{
+  // Terminal → Run Task…, or Ctrl+Shift+B for the default task ("Android: Run on device").
+  // Needs the phone connected with USB debugging (or adb over Wi-Fi).
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Android: Run on device",
+      "detail": "Build the debug app, install it on the connected phone and start it",
+      "dependsOrder": "sequence",
+      "dependsOn": ["Android: Install on device", "Android: Start app"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Android: Install on device",
+      "detail": "gradlew installDebug",
+      "type": "shell",
+      "command": "./gradlew",
+      "windows": { "command": ".\\gradlew.bat" },
+      "args": ["installDebug", "--console=plain"],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": [
+        {
+          "owner": "kotlin",
+          "fileLocation": "absolute",
+          "severity": "error",
+          "pattern": { "regexp": "^e: file://(?:/(?=[A-Za-z]:))?(.+?):(\\d+):(\\d+) (.*)$", "file": 1, "line": 2, "column": 3, "message": 4 }
+        },
+        {
+          "owner": "kotlin",
+          "fileLocation": "absolute",
+          "severity": "warning",
+          "pattern": { "regexp": "^w: file://(?:/(?=[A-Za-z]:))?(.+?):(\\d+):(\\d+) (.*)$", "file": 1, "line": 2, "column": 3, "message": 4 }
+        }
+      ]
+    },
+    {
+      "label": "Android: Start app",
+      "detail": "adb shell am start -S (restarts the app if it is running)",
+      "type": "process",
+      "command": "adb",
+      "windows": { "command": "${env:LOCALAPPDATA}\\Android\\Sdk\\platform-tools\\adb.exe" },
+      "args": ["shell", "am", "start", "-S", "-n", "com.progeo.luaflasher/.MainActivity"],
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Android: Build APK",
+      "detail": "gradlew assembleDebug → app/build/outputs/apk/debug/app-debug.apk",
+      "type": "shell",
+      "command": "./gradlew",
+      "windows": { "command": ".\\gradlew.bat" },
+      "args": ["assembleDebug", "--console=plain"],
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": [
+        {
+          "owner": "kotlin",
+          "fileLocation": "absolute",
+          "severity": "error",
+          "pattern": { "regexp": "^e: file://(?:/(?=[A-Za-z]:))?(.+?):(\\d+):(\\d+) (.*)$", "file": 1, "line": 2, "column": 3, "message": 4 }
+        },
+        {
+          "owner": "kotlin",
+          "fileLocation": "absolute",
+          "severity": "warning",
+          "pattern": { "regexp": "^w: file://(?:/(?=[A-Za-z]:))?(.+?):(\\d+):(\\d+) (.*)$", "file": 1, "line": 2, "column": 3, "message": 4 }
+        }
+      ]
+    }
+  ]
+}

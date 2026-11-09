@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.progeo.luaflasher.core.FlasherException
+import com.progeo.luaflasher.core.bundle.BundleFormat
 import com.progeo.luaflasher.data.AppSettings
 import com.progeo.luaflasher.data.StoredBundle
 import com.progeo.luaflasher.graph
@@ -136,7 +137,9 @@ fun BundlesScreen() {
                         Text(entry.release, style = MaterialTheme.typography.titleMedium)
                         Text("firmware ${entry.firmware} · ${formatBytes(entry.size)}", style = MaterialTheme.typography.bodySmall)
                         entry.notes?.takeIf { it.isNotBlank() }?.let { Text(it) }
-                        if (sync.downloading == entry.id) {
+                        if (entry.configSchema > BundleFormat.SUPPORTED_CONFIG_SCHEMA) {
+                            Text("Needs a newer version of this app (config schema ${entry.configSchema}).", color = MaterialTheme.colorScheme.error)
+                        } else if (sync.downloading == entry.id) {
                             LinearProgressIndicator(progress = { sync.downloadProgress }, modifier = Modifier.fillMaxWidth())
                         } else {
                             OutlinedButton(

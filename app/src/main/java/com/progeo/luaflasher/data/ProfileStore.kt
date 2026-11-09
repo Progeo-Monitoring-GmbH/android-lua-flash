@@ -4,7 +4,9 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import com.progeo.luaflasher.core.FlasherException
 import com.progeo.luaflasher.core.bundle.BundleFormat
-import com.progeo.luaflasher.core.config.ConfigField
+import com.progeo.luaflasher.core.config.DeviceConfigBuilder
+import com.progeo.luaflasher.core.config.FieldKind
+import com.progeo.luaflasher.core.config.LuaJson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -13,6 +15,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 import java.security.KeyStore
 import java.security.SecureRandom
@@ -26,43 +30,75 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
+/** Where a profile came from, when it was fetched from a controller (API2.md). */
+@Serializable
+data class RemoteSource(
+    val locationId: String,
+    val deviceId: Long,
+    val rawHash: String? = null,
+    val fetchedAt: String? = null,
+    val commandId: Long? = null,
+)
+
 /**
- * A project profile (PLAN.md section 7): the device_config.lua values shared by all boards
- * of a project. `device.device_hash` is entered per device at flash time and never stored here.
+ * A device configuration: the content of `device_config.lua` as JSON, so every value can be
+ * edited. Fetched profiles are named after their `device.device_hash`. When flashing, the
+ * bundle's template supplies defaults for anything the profile does not set.
  */
 @Serializable
 data class Profile(
     val id: String = UUID.randomUUID().toString(),
     val name: String,
-    /** Dotted template paths to values; secrets included in clear text in memory only. */
-    val values: Map<String, String> = emptyMap(),
-)
+    val config: JsonObject = JsonObject(emptyMap()),
+    val source: RemoteSource? = null,
+    /** When the config was read from a board over USB (ISO time), if it was. */
+    val boardReadAt: String? = null,
+) {
+    val deviceHash: String?
+        get() = (LuaJson.get(config, DeviceConfigBuilder.DEVICE_HASH) as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+}
 
-/** Profiles on disk; secret fields encrypted with an Android Keystore key. */
-class ProfileStore(private val file: File, private val cipher: SecretCipher) {
+/**
+ * Profiles on disk. The config of each profile is encrypted as a whole with an Android
+ * Keystore key: a fetched config contains the Wi-Fi password and the server token.
+ */
+class ProfileStore(
+    private val file: File,
+    private val cipher: SecretCipher,
+    /** Field types from the template, to migrate format-1 profiles. */
+    private val kindOf: (String) -> FieldKind? = { null },
+) {
 
     @Serializable
     private data class StoredProfile(
         val id: String,
         val name: String,
-        val values: Map<String, String>,
-        /** path -> base64(iv + ciphertext) */
+        /** base64(iv + AES-GCM(config JSON)) */
+        val config: String? = null,
+        val source: RemoteSource? = null,
+        val boardReadAt: String? = null,
+        // format 1: dotted paths, secrets separately
+        val values: Map<String, String> = emptyMap(),
         val secrets: Map<String, String> = emptyMap(),
     )
 
     @Serializable
-    private data class StoredFile(val format: Int = 1, val profiles: List<StoredProfile>)
+    private data class StoredFile(val format: Int = 2, val profiles: List<StoredProfile>)
 
     private val mutex = Mutex()
     private val _profiles = MutableStateFlow<List<Profile>>(emptyList())
     val profiles: StateFlow<List<Profile>> = _profiles.asStateFlow()
+
+    fun get(id: String?): Profile? = _profiles.value.firstOrNull { it.id == id }
 
     suspend fun load() = withContext(Dispatchers.IO) {
         mutex.withLock {
             _profiles.value = if (file.isFile) {
                 val stored = BundleFormat.json.decodeFromString<StoredFile>(file.readText())
                 stored.profiles.map { p ->
-                    Profile(p.id, p.name, p.values + p.secrets.mapValues { (_, v) -> cipher.decrypt(v) })
+                    val config = p.config?.let { BundleFormat.json.decodeFromString<JsonObject>(cipher.decrypt(it)) }
+                        ?: fromDotted(p.values + p.secrets.mapValues { (_, v) -> cipher.decrypt(v) }, kindOf)
+                    Profile(p.id, p.name, config, p.source, p.boardReadAt)
                 }.sortedBy { it.name.lowercase() }
             } else {
                 emptyList()
@@ -73,6 +109,35 @@ class ProfileStore(private val file: File, private val cipher: SecretCipher) {
     suspend fun save(profile: Profile) = write { list -> list.filter { it.id != profile.id } + profile }
 
     suspend fun delete(id: String) = write { list -> list.filter { it.id != id } }
+
+    /**
+     * Stores a config fetched from a controller, named after its device hash. An existing
+     * profile of the same controller (or with the same name) is updated in place.
+     */
+    suspend fun saveFetched(config: JsonObject, source: RemoteSource): Profile {
+        val hash = (LuaJson.get(config, DeviceConfigBuilder.DEVICE_HASH) as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+        val name = hash ?: source.rawHash ?: "device ${source.deviceId}"
+        val existing = _profiles.value.firstOrNull {
+            it.source?.deviceId == source.deviceId && it.source.locationId == source.locationId
+        } ?: _profiles.value.firstOrNull { it.name == name }
+        val profile = Profile(id = existing?.id ?: UUID.randomUUID().toString(), name = name, config = config, source = source)
+        save(profile)
+        return profile
+    }
+
+    /**
+     * Stores a config read from a board over USB, named after its device hash. A profile with
+     * that name is updated in place.
+     */
+    suspend fun saveFromBoard(config: JsonObject): Profile {
+        val hash = (LuaJson.get(config, DeviceConfigBuilder.DEVICE_HASH) as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+        val now = java.time.OffsetDateTime.now().withNano(0).toString()
+        val name = hash ?: "board "
+        val existing = _profiles.value.firstOrNull { it.name == name }
+        val profile = Profile(id = existing?.id ?: UUID.randomUUID().toString(), name = name, config = config, boardReadAt = now)
+        save(profile)
+        return profile
+    }
 
     suspend fun importAll(imported: List<Profile>) = write { list ->
         val names = list.map { it.name }.toMutableSet()
@@ -89,12 +154,12 @@ class ProfileStore(private val file: File, private val cipher: SecretCipher) {
             val updated = change(_profiles.value).sortedBy { it.name.lowercase() }
             val stored = StoredFile(
                 profiles = updated.map { p ->
-                    val values = p.values.filterValues { it.isNotEmpty() } - DEVICE_HASH
                     StoredProfile(
                         id = p.id,
                         name = p.name,
-                        values = values.filterKeys { it !in ConfigField.SECRET_PATHS },
-                        secrets = values.filterKeys { it in ConfigField.SECRET_PATHS }.mapValues { (_, v) -> cipher.encrypt(v) },
+                        config = cipher.encrypt(BundleFormat.json.encodeToString(JsonObject.serializer(), p.config)),
+                        source = p.source,
+                        boardReadAt = p.boardReadAt,
                     )
                 },
             )
@@ -109,7 +174,18 @@ class ProfileStore(private val file: File, private val cipher: SecretCipher) {
     }
 
     companion object {
-        const val DEVICE_HASH = "device.device_hash"
+        const val DEVICE_HASH = DeviceConfigBuilder.DEVICE_HASH
+
+        /** Format-1 profiles kept dotted paths as text; [kindOf] (the template) gives each value its type. */
+        fun fromDotted(values: Map<String, String>, kindOf: (String) -> FieldKind?): JsonObject {
+            var config = JsonObject(emptyMap())
+            for ((path, text) in values) {
+                if (text.isEmpty()) continue
+                val value = LuaJson.typed(text, kindOf(path) ?: FieldKind.STRING) ?: JsonPrimitive(text)
+                config = LuaJson.with(config, path, value)
+            }
+            return config
+        }
     }
 }
 
@@ -150,7 +226,7 @@ class ProfileImportException(detail: String) : FlasherException("The file could 
 object ProfileExport {
     @Serializable
     private data class Envelope(
-        val format: Int = 1,
+        val format: Int = 2,
         val kdf: String = "PBKDF2WithHmacSHA256",
         val iterations: Int,
         val salt: String,
@@ -160,6 +236,12 @@ object ProfileExport {
 
     @Serializable
     private data class Payload(val profiles: List<Profile>)
+
+    @Serializable
+    private data class LegacyProfile(val name: String, val values: Map<String, String> = emptyMap())
+
+    @Serializable
+    private data class LegacyPayload(val profiles: List<LegacyProfile>)
 
     private const val ITERATIONS = 310_000
 
@@ -176,28 +258,32 @@ object ProfileExport {
         val iv = ByteArray(12).also(random::nextBytes)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, derive(passphrase, salt, ITERATIONS), GCMParameterSpec(128, iv))
-        val plain = BundleFormat.json.encodeToString(Payload.serializer(), Payload(profiles.map { it.copy(values = it.values - ProfileStore.DEVICE_HASH) }))
+        val plain = BundleFormat.json.encodeToString(Payload.serializer(), Payload(profiles))
         val ct = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
         val b64 = Base64.getEncoder()
         val envelope = Envelope(iterations = ITERATIONS, salt = b64.encodeToString(salt), iv = b64.encodeToString(iv), data = b64.encodeToString(ct))
         return BundleFormat.json.encodeToString(Envelope.serializer(), envelope).toByteArray(Charsets.UTF_8)
     }
 
-    fun import(bytes: ByteArray, passphrase: CharArray): List<Profile> {
+    fun import(bytes: ByteArray, passphrase: CharArray, kindOf: (String) -> FieldKind? = { null }): List<Profile> {
         val envelope = try {
             BundleFormat.json.decodeFromString<Envelope>(String(bytes, Charsets.UTF_8))
         } catch (e: Exception) {
             throw ProfileImportException("not a profile export: ${e.message}")
         }
-        if (envelope.format != 1 || envelope.kdf != "PBKDF2WithHmacSHA256") throw ProfileImportException("unsupported format")
+        if (envelope.format !in 1..2 || envelope.kdf != "PBKDF2WithHmacSHA256") throw ProfileImportException("unsupported format")
         val b64 = Base64.getDecoder()
-        return try {
+        val plain = try {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, derive(passphrase, b64.decode(envelope.salt), envelope.iterations), GCMParameterSpec(128, b64.decode(envelope.iv)))
-            val plain = String(cipher.doFinal(b64.decode(envelope.data)), Charsets.UTF_8)
-            BundleFormat.json.decodeFromString<Payload>(plain).profiles
+            String(cipher.doFinal(b64.decode(envelope.data)), Charsets.UTF_8)
         } catch (e: Exception) {
             throw ProfileImportException("decryption failed: ${e.message}")
+        }
+        return if (envelope.format == 1) {
+            BundleFormat.json.decodeFromString<LegacyPayload>(plain).profiles.map { Profile(name = it.name, config = ProfileStore.fromDotted(it.values, kindOf)) }
+        } else {
+            BundleFormat.json.decodeFromString<Payload>(plain).profiles
         }
     }
 }

@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.progeo.luaflasher.BuildConfig
+import com.progeo.luaflasher.backend.AuthState
 import com.progeo.luaflasher.data.AppSettings
 import com.progeo.luaflasher.graph
 import com.progeo.luaflasher.ui.Section
@@ -39,8 +40,11 @@ fun SettingsScreen() {
     val graph = LocalContext.current.graph
     val scope = rememberCoroutineScope()
     val settings by graph.settings.settings.collectAsState(AppSettings())
+    val auth by graph.backend.state.collectAsState()
     var baseUrl by remember { mutableStateOf(settings.baseUrl) }
     LaunchedEffect(settings.baseUrl) { baseUrl = settings.baseUrl }
+    var backendUrl by remember { mutableStateOf(settings.backendUrl) }
+    LaunchedEffect(settings.backendUrl) { backendUrl = settings.backendUrl }
 
     Column(
         Modifier
@@ -70,6 +74,17 @@ fun SettingsScreen() {
             Text("Releases are downloaded from ${settings.baseUrl}", style = MaterialTheme.typography.bodySmall)
         }
 
+        Section("ProGeo account") {
+            when (val a = auth) {
+                AuthState.LoggedOut -> Text("Not signed in. Sign in under Profiles → Fetch from controller.", style = MaterialTheme.typography.bodySmall)
+                is AuthState.LoggedIn -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Signed in as ${a.username ?: "?"}", modifier = Modifier.weight(1f))
+                    TextButton(onClick = { scope.launch { graph.backend.logout() } }) { Text("Log out") }
+                }
+            }
+            Text("Server: ${settings.backendUrl}", style = MaterialTheme.typography.bodySmall)
+        }
+
         Section("Boards") {
             SwitchRow(
                 "Board has auto-reset (DTR/RTS)",
@@ -96,6 +111,32 @@ fun SettingsScreen() {
                 Row {
                     TextButton(onClick = { scope.launch { graph.settings.setBaseUrl(baseUrl) } }, enabled = baseUrl.startsWith("http")) { Text("Save") }
                     TextButton(onClick = { scope.launch { graph.settings.setBaseUrl(AppSettings.DEFAULT_BASE_URL) } }) { Text("Reset to api.progeo.com") }
+                }
+                OutlinedTextField(
+                    value = backendUrl,
+                    onValueChange = { backendUrl = it },
+                    label = { Text("Backend URL (login, controller configs)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row {
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                // Tokens belong to one server; never send them to another.
+                                graph.backend.logout()
+                                graph.settings.setBackendUrl(backendUrl)
+                            }
+                        },
+                        enabled = backendUrl.startsWith("https://") && backendUrl.trimEnd('/') != settings.backendUrl.trimEnd('/'),
+                    ) { Text("Save (logs out)") }
+                    TextButton(onClick = {
+                        scope.launch {
+                            graph.backend.logout()
+                            graph.settings.setBackendUrl(AppSettings.DEFAULT_BACKEND_URL)
+                        }
+                    }) { Text("Reset") }
                 }
             }
         }

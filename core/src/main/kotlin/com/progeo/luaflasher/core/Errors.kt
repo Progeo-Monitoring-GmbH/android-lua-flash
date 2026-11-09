@@ -43,9 +43,9 @@ class NoPromptException : FlasherException(
     "No answer from NodeMCU. Remove the jumper, press RST. Check the power supply.",
 )
 
-class LuaCommandException(command: String, error: String) : FlasherException(
-    "The board reported an error: $error",
-    "Lua command failed: $command -> $error",
+class LuaCommandException(command: String, val luaError: String) : FlasherException(
+    "The board reported an error: $luaError",
+    "Lua command failed: $command -> $luaError",
 )
 
 class LuaTimeoutException(command: String) : FlasherException(

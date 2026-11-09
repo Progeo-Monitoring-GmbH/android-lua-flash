@@ -89,9 +89,35 @@ class NodeMcuTest {
     }
 
     @Test
+    fun `reads files of any size and content from the board`() = runTest {
+        val content = ByteArray(2_600) { (it % 256).toByte() } // several chunks, every byte value
+        val node = board { files["config/device_config.lua"] = content }
+        val console = LuaConsole(node)
+        console.waitForPrompt()
+        val reader = NodeMcuFiles(console)
+        assertEquals(mapOf("config/device_config.lua" to 2_600L), reader.list())
+        assertContentEquals(content, reader.read("config/device_config.lua"))
+        assertNull(reader.read("config/missing.lua"))
+        // empty file
+        node.files["empty.lua"] = ByteArray(0)
+        assertContentEquals(ByteArray(0), reader.read("empty.lua"))
+    }
+
+    @Test
+    fun `reads the device config a full install wrote`() = runTest {
+        val node = board()
+        val config = "return {\n  device = {\n    device_hash = \"4711-01\",\n  },\n}\n"
+        NodeMcuInstaller(LuaConsole(node)).install(payload(config), InstallOptions(InstallMode.FULL))
+        node.reset()
+        val console = LuaConsole(node)
+        console.waitForPrompt()
+        assertEquals(config, String(NodeMcuFiles(console).read("config/device_config.lua")!!))
+    }
+
+    @Test
     fun `all console lines fit`() {
         FileUploader.RECV_LUA.forEach { assertTrue(it.length <= LuaConsole.MAX_LINE, it) }
-        assertTrue(NodeMcuInstaller.HEX_HELPER.length <= LuaConsole.MAX_LINE, "hex helper is ${NodeMcuInstaller.HEX_HELPER.length}")
+        assertTrue(NodeMcuFiles.HEX_HELPER.length <= LuaConsole.MAX_LINE, "hex helper is ${NodeMcuFiles.HEX_HELPER.length}")
         assertTrue(LuaConsole.MAX_BODY >= 140, "max body ${LuaConsole.MAX_BODY}")
     }
 
@@ -163,6 +189,22 @@ class NodeMcuTest {
         assertFailsWith<WrongFirmwareException> {
             NodeMcuInstaller(LuaConsole(node)).install(payload(), InstallOptions(InstallMode.FULL))
         }
+    }
+
+    @Test
+    fun `lfs reload that raises system restarting is success`() = runTest {
+        // What the real board did: pcall catches "stdin:1: system restarting", then the node resets.
+        val node = board { lfsReloadRaisesRestarting = true }
+        val result = NodeMcuInstaller(LuaConsole(node)).install(payload(), InstallOptions(InstallMode.FULL))
+        assertTrue(result.success, result.bootLog)
+        assertTrue("main" in node.lfsModules)
+        assertFalse("lfs.img" in node.files)
+    }
+
+    @Test
+    fun `lfs reload that restarts silently is success too`() = runTest {
+        val node = board { lfsReloadRaisesRestarting = false }
+        assertTrue(NodeMcuInstaller(LuaConsole(node)).install(payload(), InstallOptions(InstallMode.FULL)).success)
     }
 
     @Test

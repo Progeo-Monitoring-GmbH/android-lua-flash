@@ -4,6 +4,7 @@ import com.progeo.luaflasher.core.DeviceConfigException
 import com.progeo.luaflasher.core.FlasherException
 import com.progeo.luaflasher.core.LfsReloadException
 import com.progeo.luaflasher.core.LuaCommandException
+import com.progeo.luaflasher.core.LuaTimeoutException
 import com.progeo.luaflasher.core.WrongFirmwareException
 import com.progeo.luaflasher.core.config.LuaString.quote
 
@@ -66,6 +67,7 @@ class NodeMcuInstaller(
     private val log: (String) -> Unit = {},
 ) {
     private val uploader = FileUploader(console)
+    private val files = NodeMcuFiles(console)
 
     suspend fun install(
         payload: InstallPayload,
@@ -97,7 +99,7 @@ class NodeMcuInstaller(
         // 2. Clean.
         step(InstallStep.CLEAN)
         val existing = existingFiles()
-        val keptWifi = if (options.keepWifi && WIFI_CONFIG in existing) readSmallFile(WIFI_CONFIG, existing.getValue(WIFI_CONFIG)) else null
+        val keptWifi = if (options.keepWifi && WIFI_CONFIG in existing) files.read(WIFI_CONFIG, existing.getValue(WIFI_CONFIG)) else null
         if (options.mode == InstallMode.FULL) {
             console.exec("file.format()", timeoutMs = FORMAT_TIMEOUT_MS)
         } else {
@@ -155,10 +157,7 @@ class NodeMcuInstaller(
         ).value
 
     /** Remote files with their sizes. */
-    suspend fun existingFiles(): Map<String, Long> {
-        val output = console.exec("for k,v in pairs(file.list()) do print('#F',k,v) end").output
-        return LIST_LINE.findAll(output).associate { it.groupValues[1] to it.groupValues[2].toLong() }
-    }
+    suspend fun existingFiles(): Map<String, Long> = files.list()
 
     private suspend fun removeIfPresent(paths: List<String>, existing: Map<String, Long>) {
         for (path in paths) {
@@ -169,39 +168,31 @@ class NodeMcuInstaller(
         }
     }
 
-    /** Reads a small file as hex (there is no encoder module on the device). */
-    private suspend fun readSmallFile(path: String, size: Long): ByteArray? {
-        if (size > SMALL_FILE_MAX) {
-            log("$path is $size bytes, too big to keep")
-            return null
-        }
-        console.sendLine(HEX_HELPER)
-        console.awaitText(2_000) { it.endsWith("> ") }
-        val hex = console.exec("return _hx(${quote(path)})").value
-        if (hex.length != size.toInt() * 2) return null
-        return ByteArray(size.toInt()) { i -> hex.substring(2 * i, 2 * i + 2).toInt(16).toByte() }
-    }
 
+    /**
+     * `node.LFS.reload` either restarts the node (success) or returns why it refused the image
+     * (firmware/image mismatch). On success the Lua 5.3 firmware first raises the error
+     * "system restarting", which pcall catches; a silent restart (no result before the
+     * timeout) is success as well. Whether the modules arrived is checked afterwards.
+     */
     private suspend fun reloadLfs() {
-        val n = "node.LFS.reload('$LFS_IMAGE')"
-        // Success writes the image to flash and restarts the node, so no result comes back;
-        // an error string comes back and means the image does not fit this firmware.
-        try {
-            val result = console.exec("return $n", timeoutMs = LFS_RELOAD_RESULT_MS, awaitPrompt = false)
-            throw LfsReloadException(result.value)
-        } catch (e: LfsReloadException) {
-            throw e
+        val outcome: String? = try {
+            console.exec("return node.LFS.reload('$LFS_IMAGE')", timeoutMs = LFS_RELOAD_RESULT_MS, awaitPrompt = false).value
         } catch (e: LuaCommandException) {
-            throw LfsReloadException(e.message ?: "error")
-        } catch (e: FlasherException) {
-            // timeout = the node restarted; that is the success path
+            e.luaError
+        } catch (e: LuaTimeoutException) {
+            null
         }
+        if (outcome != null && !RESTARTING.containsMatchIn(outcome)) throw LfsReloadException(outcome)
+        log("LFS image accepted, node restarting")
+        // The old interpreter may still print a prompt before the reset; let the restart happen.
+        console.drain(LFS_RESTART_SETTLE_MS)
         console.waitForPrompt()
     }
 
-    private suspend fun uploadConfig(files: List<RemoteFile>, onProgress: (InstallProgress) -> Unit) {
-        files.forEachIndexed { index, file ->
-            onProgress(InstallProgress(InstallStep.UPLOAD_CONFIG, index.toFloat() / files.size, file.path))
+    private suspend fun uploadConfig(configFiles: List<RemoteFile>, onProgress: (InstallProgress) -> Unit) {
+        configFiles.forEachIndexed { index, file ->
+            onProgress(InstallProgress(InstallStep.UPLOAD_CONFIG, index.toFloat() / configFiles.size, file.path))
             log("uploading ${file.path}")
             uploader.upload(file.path, file.content)
             if (file.path.startsWith("config/") && file.path.endsWith(".lua")) {
@@ -232,14 +223,10 @@ class NodeMcuInstaller(
         const val WIFI_CONFIG = "config/wifi_config.lua"
         const val FORMAT_TIMEOUT_MS = 180_000L
         const val LFS_RELOAD_RESULT_MS = 8_000L
-        const val SMALL_FILE_MAX = 1024L
+        const val LFS_RESTART_SETTLE_MS = 3_000L
 
-        private val LIST_LINE = Regex("(?m)^#F\t([^\t\r\n]+)\t(\\d+)\r?$")
+        /** What node.LFS.reload raises when it accepted the image and restarts the node. */
+        private val RESTARTING = Regex("system restarting", RegexOption.IGNORE_CASE)
         private val BOOT_FAILED = Regex("Boot failed:([^\r\n]*)")
-
-        /** Defines _hx(path): the file content as hex, at most 1 KB. */
-        const val HEX_HELPER =
-            "function _hx(p) local f=file.open(p,'r') if not f then return '' end local s=f:read(1024) or '' f:close() " +
-                "return (s:gsub('.',function(c) return ('%02X'):format(c:byte()) end)) end"
     }
 }

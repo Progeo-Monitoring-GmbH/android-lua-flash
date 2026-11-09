@@ -1,5 +1,9 @@
 package com.progeo.luaflasher.core.config
 
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+
 enum class FieldKind { STRING, NUMBER, BOOLEAN }
 
 /**
@@ -30,6 +34,42 @@ class ConfigTemplate(val root: LuaValue.Table) {
     val fields: List<ConfigField> = buildList { collect(root, "", this) }
 
     fun field(path: String): ConfigField? = fields.firstOrNull { it.path == path }
+
+    /**
+     * The values the template sets, as a config tree: no placeholders, no commented-out
+     * fields, no `firmware` table. Tables stay, even when empty.
+     */
+    fun defaults(): JsonObject = defaultsOf(root, top = true)
+
+    /**
+     * [config] with its keys in the template's order (placeholders and commented fields
+     * included); keys the template does not know follow in their own order.
+     */
+    fun ordered(config: JsonObject): JsonObject = orderLike(root, config)
+
+    private fun orderLike(table: LuaValue.Table, obj: JsonObject): JsonObject {
+        val out = LinkedHashMap<String, JsonElement>()
+        for (name in table.fields.map { it.name }.distinct()) {
+            val value = obj[name] ?: continue
+            val sub = table.fields.firstOrNull { it.name == name && it.value is LuaValue.Table }?.value as? LuaValue.Table
+            out[name] = if (value is JsonObject && sub != null) orderLike(sub, value) else value
+        }
+        for ((k, v) in obj) if (k !in out) out[k] = v
+        return JsonObject(out)
+    }
+
+    private fun defaultsOf(table: LuaValue.Table, top: Boolean): JsonObject {
+        val map = LinkedHashMap<String, JsonElement>()
+        for (f in table.fields) {
+            if (f.commented || f.isPlaceholder || f.value == LuaValue.Nil) continue
+            if (top && f.name in SKIPPED_TABLES) continue
+            map[f.name] = when (val v = f.value) {
+                is LuaValue.Table -> if (v.fields.any { it.positional }) LuaJson.fromTable(v) else defaultsOf(v, top = false)
+                else -> LuaJson.toJson(v)
+            }
+        }
+        return JsonObject(map)
+    }
 
     private fun collect(table: LuaValue.Table, prefix: String, out: MutableList<ConfigField>) {
         for (f in table.fields) {
@@ -74,75 +114,33 @@ class ConfigTemplate(val root: LuaValue.Table) {
     }
 }
 
-/** Writes `config/device_config.lua` from a template and the profile + per-device values. */
-object LuaConfigWriter {
+/** Builds the `device_config.lua` content the app writes (PLAN.md section 7). */
+object DeviceConfigBuilder {
     /**
-     * [values] maps dotted paths (e.g. `device.device_hash`) to text; empty values count as
-     * unset. Unset fields get the template default or are omitted; placeholders are never
-     * written; the `firmware` table is dropped; tables keep the template's order.
+     * Template defaults, overlaid by the profile (which wins, and may hold keys the template
+     * does not know), then the device hash. Placeholders and commented template fields are
+     * never part of the defaults; the template's `firmware` table is dropped.
      */
-    fun write(template: ConfigTemplate, values: Map<String, String>, header: String? = null): String {
-        val sb = StringBuilder()
-        header?.lineSequence()?.forEach { sb.append("-- ").append(it).append('\n') }
-        sb.append("return {\n")
-        writeTable(template.root, "", values, sb, 1)
-        sb.append("}\n")
-        return sb.toString()
+    fun build(template: ConfigTemplate, profile: JsonObject, deviceHash: String? = null): JsonObject {
+        var config = LuaJson.merge(template.defaults(), profile)
+        if (!deviceHash.isNullOrBlank()) config = LuaJson.with(config, DEVICE_HASH, JsonPrimitive(deviceHash.trim()))
+        return template.ordered(config)
     }
 
-    private fun writeTable(table: LuaValue.Table, prefix: String, values: Map<String, String>, sb: StringBuilder, depth: Int) {
-        val indent = "  ".repeat(depth)
-        val seen = HashSet<String>()
-        for (f in table.fields) {
-            if (prefix.isEmpty() && f.name in ConfigTemplate.SKIPPED_TABLES) continue
-            if (f.commented && table[f.name] != null) continue
-            if (!seen.add(f.name)) continue
-            val path = prefix + f.name
-            val v = f.value
-            if (v is LuaValue.Table) {
-                val inner = StringBuilder()
-                writeTable(v, "$path.", values, inner, depth + 1)
-                if (inner.isEmpty()) {
-                    sb.append(indent).append(f.name).append(" = {},\n")
-                } else {
-                    sb.append(indent).append(f.name).append(" = {\n").append(inner).append(indent).append("},\n")
-                }
-                continue
-            }
-            val literal = literalFor(f, values[path]?.takeIf { it.isNotEmpty() }) ?: continue
-            sb.append(indent).append(f.name).append(" = ").append(literal).append(",\n")
-        }
-    }
+    fun lua(template: ConfigTemplate, profile: JsonObject, deviceHash: String? = null, header: String? = null): String =
+        LuaJson.write(build(template, profile, deviceHash), header)
 
-    private fun literalFor(field: LuaField, value: String?): String? {
-        val v = field.value
-        if (value != null) {
-            return when (v) {
-                is LuaValue.Num -> value.trim().also { require(isNumber(it)) { "${field.name}: not a number: $value" } }
-                is LuaValue.Bool -> value.trim().lowercase().also { require(it == "true" || it == "false") { "${field.name}: not true/false: $value" } }
-                else -> LuaString.quote(value)
-            }
-        }
-        if (field.commented || field.isPlaceholder) return null
-        return when (v) {
-            is LuaValue.Str -> LuaString.quote(v.value)
-            is LuaValue.Num -> v.literal
-            is LuaValue.Bool -> v.value.toString()
-            else -> null
-        }
-    }
-
-    private val NUMBER = Regex("-?(?:0[xX][0-9a-fA-F]+|(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?)")
-
-    fun isNumber(text: String) = NUMBER.matches(text)
+    const val DEVICE_HASH = "device.device_hash"
 }
-
 enum class Severity { ERROR, WARNING }
 
 data class ConfigIssue(val path: String, val severity: Severity, val message: String)
 
 /** Checks from PLAN.md section 7 plus type checks against the template. */
 object ConfigValidator {
+    /** Checks a complete config tree (e.g. from [DeviceConfigBuilder.build]). */
+    fun validate(template: ConfigTemplate, config: JsonObject): List<ConfigIssue> = validate(template, LuaJson.flatten(config))
+
     fun validate(template: ConfigTemplate, values: Map<String, String>): List<ConfigIssue> {
         val issues = ArrayList<ConfigIssue>()
         fun effective(path: String) = values[path]?.takeIf { it.isNotEmpty() } ?: template.field(path)?.default
@@ -150,7 +148,7 @@ object ConfigValidator {
         for (field in template.fields) {
             val value = values[field.path]?.takeIf { it.isNotEmpty() } ?: continue
             when (field.kind) {
-                FieldKind.NUMBER -> if (!LuaConfigWriter.isNumber(value.trim())) {
+                FieldKind.NUMBER -> if (!LuaJson.isNumber(value)) {
                     issues += ConfigIssue(field.path, Severity.ERROR, "must be a number")
                 }
                 FieldKind.BOOLEAN -> if (value.trim().lowercase() !in setOf("true", "false")) {

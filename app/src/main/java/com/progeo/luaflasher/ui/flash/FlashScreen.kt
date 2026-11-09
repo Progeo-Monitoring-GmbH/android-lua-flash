@@ -80,11 +80,13 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FlashScreen(onClose: () -> Unit) {
+fun FlashScreen(profileId: String? = null, onClose: () -> Unit) {
     val context = LocalContext.current
     val graph = context.graph
     val state by graph.flash.state.collectAsState()
     val setup: FlashSetupViewModel = viewModel()
+    val profiles by graph.profiles.profiles.collectAsState()
+    LaunchedEffect(profileId, profiles) { setup.applyInitialProfile(profiles.firstOrNull { it.id == profileId }) }
 
     // Keep the screen on while a job is open (PLAN.md section 4).
     val activity = context as? Activity
@@ -128,7 +130,7 @@ private fun SetupContent(vm: FlashSetupViewModel) {
         if (vm.bundleId == null || usable.none { it.id == vm.bundleId }) vm.bundleId = usable.maxByOrNull { it.created ?: "" }?.id
     }
     LaunchedEffect(profiles) {
-        if (vm.profileId == null || profiles.none { it.id == vm.profileId }) vm.profileId = profiles.firstOrNull()?.id
+        if (vm.profileId != null && profiles.none { it.id == vm.profileId }) vm.selectProfile(null)
     }
     LaunchedEffect(vm.bundleId) { vm.loadTemplate(graph) }
 
@@ -164,13 +166,13 @@ private fun SetupContent(vm: FlashSetupViewModel) {
                 label = "Profile",
                 options = listOf<Pair<String?, String>>(null to "(no profile: template defaults only)") + profiles.map { it.id to it.name },
                 selected = vm.profileId,
-                onSelect = { vm.profileId = it },
+                onSelect = { id -> vm.selectProfile(profiles.firstOrNull { it.id == id }) },
             )
             OutlinedTextField(
                 value = vm.deviceHash,
                 onValueChange = { vm.deviceHash = it.trim() },
                 label = { Text("Device hash") },
-                supportingText = { Text("From the label on the board; scan its QR code or type it.") },
+                supportingText = { Text(if (vm.profileId != null) "Taken from the profile; change it to flash the config onto another board." else "From the label on the board; scan its QR code or type it.") },
                 singleLine = true,
                 isError = vm.deviceHash.isBlank(),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
