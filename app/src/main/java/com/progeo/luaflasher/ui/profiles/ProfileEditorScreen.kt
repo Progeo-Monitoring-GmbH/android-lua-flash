@@ -5,10 +5,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -17,6 +19,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -30,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Switch
@@ -62,12 +66,13 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.progeo.core.UserFacingException
 import com.progeo.luaflasher.AppGraph
 import com.progeo.luaflasher.backend.RemoteDevice
 import com.progeo.luaflasher.backend.RemoteLocation
-import com.progeo.luaflasher.core.FlasherException
 import com.progeo.luaflasher.core.config.Choice
 import com.progeo.luaflasher.core.config.ConfigChoices
+import com.progeo.luaflasher.core.config.ConfigCode
 import com.progeo.luaflasher.core.config.ConfigIssue
 import com.progeo.luaflasher.core.config.ConfigTemplate
 import com.progeo.luaflasher.core.config.ConfigValidator
@@ -80,10 +85,10 @@ import com.progeo.luaflasher.core.config.Severity
 import com.progeo.luaflasher.data.Profile
 import com.progeo.luaflasher.data.RemoteSource
 import com.progeo.luaflasher.graph
-import com.progeo.luaflasher.ui.LoginFormState
-import com.progeo.luaflasher.ui.MessageCard
-import com.progeo.luaflasher.ui.clipboardText
-import com.progeo.luaflasher.ui.copyToClipboard
+import com.progeo.core.qr.CodeScanDialog
+import com.progeo.core.ui.MessageCard
+import com.progeo.core.ui.clipboardText
+import com.progeo.core.ui.copyToClipboard
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -216,6 +221,28 @@ class ProfileEditorViewModel : ViewModel() {
     val textError: String?
         get() = luaError?.let { "Lua tab: $it" } ?: jsonError?.let { "JSON tab: $it" }
 
+    // ---- new profile: a config from a QR code
+
+    var scanning by mutableStateOf(false)
+
+    /** What the last scan did: message and whether it is an error. */
+    var scanResult by mutableStateOf<Pair<String, Boolean>?>(null)
+        private set
+
+    /** A valid config in the code is added to the profile: its values replace those it sets. */
+    fun scanned(text: String) {
+        scanning = false
+        val t = template ?: return
+        scanResult = when (val r = ConfigCode.parse(text, t)) {
+            is ConfigCode.Result.Invalid -> r.reason to true
+            is ConfigCode.Result.Valid -> {
+                replaceConfig(LuaJson.merge(config, r.config))
+                val shown = r.paths.take(8).joinToString() + if (r.paths.size > 8) ", …" else ""
+                "Added ${r.paths.size} value${if (r.paths.size == 1) "" else "s"} from the QR code: $shown. Check them and save." to false
+            }
+        }
+    }
+
     /** A whole new config: every unfinished edit (field drafts, broken Lua/JSON text) is dropped. */
     private fun replaceConfig(newConfig: JsonObject) {
         config = newConfig
@@ -237,7 +264,6 @@ class ProfileEditorViewModel : ViewModel() {
 
     // ---- new profile: pick the location, then load its controller's config from the server
 
-    val loginForm = LoginFormState()
     var locations by mutableStateOf<List<RemoteLocation>?>(null)
         private set
     var locationQuery by mutableStateOf("")
@@ -270,7 +296,7 @@ class ProfileEditorViewModel : ViewModel() {
                 block()
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: FlasherException) {
+            } catch (e: UserFacingException) {
                 if (generation == locationGeneration) locationError = e.userMessage
             } catch (e: Exception) {
                 if (generation == locationGeneration) locationError = e.message ?: e.javaClass.simpleName
@@ -279,10 +305,6 @@ class ProfileEditorViewModel : ViewModel() {
                 if (generation == locationGeneration) locationProgress = null
             }
         }
-    }
-
-    fun login(graph: AppGraph) {
-        viewModelScope.launch { if (loginForm.submit(graph)) loadLocations(graph) }
     }
 
     fun loadLocations(graph: AppGraph, force: Boolean = false) {
@@ -414,6 +436,13 @@ fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Un
         TopAppBar(
             title = { Text(if (id == null) "New profile" else vm.name.ifEmpty { "Profile" }) },
             navigationIcon = { IconButton(onClick = onDone) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
+            actions = {
+                if (id == null) {
+                    IconButton(onClick = { vm.scanning = true }, enabled = vm.loaded) {
+                        Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan a config QR code")
+                    }
+                }
+            },
         )
         TabRow(selectedTabIndex = tab) {
             listOf("Values", "Lua", "JSON").forEachIndexed { i, title ->
@@ -439,7 +468,15 @@ fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Un
             ) {
                 when (tab) {
                     0 -> {
-                        if (id == null && vm.loaded) NewProfileLocation(vm, graph)
+                        if (id == null && vm.loaded) {
+                            NewProfileLocation(vm, graph)
+                            OutlinedButton(onClick = { vm.scanning = true }, modifier = Modifier.fillMaxWidth()) {
+                                Icon(Icons.Default.QrCodeScanner, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Scan a config QR code")
+                            }
+                            vm.scanResult?.let { (text, error) -> MessageCard(text, error) }
+                        }
                         vm.textError?.let { MessageCard("$it. These values are its last valid state.") }
                         OutlinedTextField(
                             value = vm.name,
@@ -519,6 +556,18 @@ fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Un
                 ) { Icon(Icons.Default.Save, contentDescription = "Save") }
             }
         }
+    }
+
+    if (vm.scanning) {
+        CodeScanDialog(
+            onDismiss = { vm.scanning = false },
+            onCode = {
+                vm.scanned(it)
+                tab = 0 // the result shows on the Values tab
+            },
+            title = "Scan a config QR code",
+            hint = "Hold the QR code with the device config (Lua or JSON) inside the frame.",
+        )
     }
 }
 

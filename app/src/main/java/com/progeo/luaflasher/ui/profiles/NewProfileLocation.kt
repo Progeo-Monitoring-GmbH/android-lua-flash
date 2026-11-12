@@ -33,11 +33,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.progeo.luaflasher.AppGraph
-import com.progeo.luaflasher.backend.AuthState
+import com.progeo.core.auth.AuthState
 import com.progeo.luaflasher.backend.RemoteLocation
-import com.progeo.luaflasher.ui.LoginForm
-import com.progeo.luaflasher.ui.MessageCard
-import com.progeo.luaflasher.ui.Section
+import com.progeo.core.ui.MessageCard
+import com.progeo.core.ui.Section
 
 private const val MAX_MATCHES = 30
 
@@ -57,16 +56,10 @@ fun NewProfileLocation(vm: ProfileEditorViewModel, graph: AppGraph) {
     }
 
     Section("Location") {
-        when {
-            auth is AuthState.LoggedOut -> {
-                LoginForm(
-                    vm.loginForm,
-                    onSubmit = { vm.login(graph) },
-                    hint = "Log in to pick the project's location; the app then loads the config of its controller from the server.",
-                )
-            }
-            vm.location == null -> LocationSearch(vm, graph)
-            else -> SelectedLocation(vm, graph, vm.location!!)
+        // The app is behind the login (AuthGate): the session is there, or the login covers this.
+        when (val loc = vm.location) {
+            null -> LocationSearch(vm, graph)
+            else -> SelectedLocation(vm, graph, loc)
         }
         vm.locationProgress?.let { Progress(it) }
         vm.locationError?.let { MessageCard(it) }

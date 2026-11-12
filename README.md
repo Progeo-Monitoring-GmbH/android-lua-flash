@@ -10,7 +10,7 @@ Requirements: JDK 17+ (Android Studio's JBR works), Android SDK with platform 36
 ```sh
 ./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
 ./gradlew installDebug         # onto a phone connected with USB debugging
-./gradlew test                 # JVM tests of :core and :app
+./gradlew test                 # JVM tests of :core, :progeo-core and :app
 ```
 
 In VS Code: **Ctrl+Shift+B** runs *Android: Run on device* (install on the phone connected via adb,
@@ -29,6 +29,8 @@ Optional test inputs:
 
 - `core/`: plain Kotlin, no Android: ROM bootloader (SLIP, sync, flash), NodeMCU console and upload,
   install sequence, bundle/signature validation, device config generation. Tested against simulated boards.
+- `progeo-core/`: Android library shared with the ProGeo spin-off apps: corporate design, login
+  (password or QR login code), token storage, permissions, QR scanner, Impressum. See its [README](progeo-core/README.md).
 - `app/`: Android: USB serial, sync with `https://api.progeo.com/firmware/`, bundle store, profiles,
   flash wizard, serial monitor.
 - `keys/`: public firmware signing keys.

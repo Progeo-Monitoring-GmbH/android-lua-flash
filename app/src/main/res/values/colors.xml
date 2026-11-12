@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#0B5394</color>
+    <!-- ProGeo corporate colors (progeo-core ProGeoColors). -->
+    <color name="ic_launcher_background">#0B3659</color>
+    <color name="page_background">#E6E3E2</color>
 </resources>

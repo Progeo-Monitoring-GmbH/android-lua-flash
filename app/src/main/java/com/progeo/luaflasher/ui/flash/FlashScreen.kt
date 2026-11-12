@@ -62,9 +62,8 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
-import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.progeo.core.qr.CodeFormat
+import com.progeo.core.qr.CodeScanDialog
 import com.progeo.luaflasher.core.FlasherException
 import com.progeo.luaflasher.core.config.Severity
 import com.progeo.luaflasher.core.nodemcu.InstallMode
@@ -72,10 +71,10 @@ import com.progeo.luaflasher.core.nodemcu.InstallStep
 import com.progeo.luaflasher.data.AppSettings
 import com.progeo.luaflasher.flash.FlashState
 import com.progeo.luaflasher.graph
-import com.progeo.luaflasher.ui.MessageCard
-import com.progeo.luaflasher.ui.Section
+import com.progeo.core.ui.MessageCard
+import com.progeo.core.ui.Section
 import com.progeo.luaflasher.ui.shareText
-import com.progeo.luaflasher.ui.theme.StatusColors
+import com.progeo.core.ui.theme.StatusColors
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -123,6 +122,7 @@ private fun SetupContent(vm: FlashSetupViewModel) {
     val profiles by graph.profiles.profiles.collectAsState()
     val settings by graph.settings.settings.collectAsState(AppSettings())
     val devices by graph.usb.devices.collectAsState()
+    var scanning by remember { mutableStateOf(false) }
 
     // Only complete, verified bundles; unsigned only in developer mode.
     val usable = bundles.filter { it.signed || settings.developerMode }
@@ -177,17 +177,23 @@ private fun SetupContent(vm: FlashSetupViewModel) {
                 isError = vm.deviceHash.isBlank(),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
                 trailingIcon = {
-                    IconButton(onClick = {
-                        val options = GmsBarcodeScannerOptions.Builder()
-                            .setBarcodeFormats(Barcode.FORMAT_QR_CODE, Barcode.FORMAT_DATA_MATRIX, Barcode.FORMAT_CODE_128)
-                            .build()
-                        GmsBarcodeScanning.getClient(context, options).startScan()
-                            .addOnSuccessListener { code -> code.rawValue?.let { vm.deviceHash = extractHash(it) } }
-                            .addOnFailureListener { vm.error = "Scanner not available: ${it.message}" }
-                    }) { Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan QR code") }
+                    IconButton(onClick = { scanning = true }) { Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan the label") }
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (scanning) {
+                // progeo-core's scanner (CameraX + ZXing), no Google Play services needed.
+                CodeScanDialog(
+                    onDismiss = { scanning = false },
+                    onCode = {
+                        vm.deviceHash = extractHash(it)
+                        scanning = false
+                    },
+                    title = "Scan the label",
+                    hint = "Hold the QR code or barcode on the board inside the frame.",
+                    formats = CodeFormat.LABELS,
+                )
+            }
         }
 
         Section("Mode") {

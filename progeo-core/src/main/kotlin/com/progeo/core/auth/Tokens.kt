@@ -1,6 +1,6 @@
-package com.progeo.luaflasher.backend
+package com.progeo.core.auth
 
-import com.progeo.luaflasher.data.SecretCipher
+import com.progeo.core.security.SecretCipher
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -28,7 +28,8 @@ class InMemoryTokenStore(private var tokens: Tokens? = null) : TokenStore {
 
 /**
  * Tokens encrypted with an Android Keystore key, in `noBackupFilesDir` so they never go into
- * a backup (API.md "Token storage on Android"). The password is never stored.
+ * a backup (API.md "Token storage on Android"). The password is never stored. Apps keep
+ * the file and key alias of the tokens they stored before.
  */
 class EncryptedTokenStore(private val file: File, private val cipher: SecretCipher) : TokenStore {
     @Volatile private var cached: Tokens? = null
@@ -68,6 +69,7 @@ data class Claims(
     val username: String?,
     val exp: Long?,
     val isStaff: Boolean,
+    val isSuperuser: Boolean,
     val isDemo: Boolean,
     val isPending: Boolean,
     val twoFactorSetupRequired: Boolean,
@@ -81,6 +83,7 @@ data class Claims(
                 username = json["username"]?.jsonPrimitive?.content,
                 exp = json["exp"]?.jsonPrimitive?.longOrNull,
                 isStaff = flag("is_staff"),
+                isSuperuser = flag("is_superuser"),
                 isDemo = flag("is_demo"),
                 isPending = flag("is_pending"),
                 twoFactorSetupRequired = flag("two_factor_setup_required"),

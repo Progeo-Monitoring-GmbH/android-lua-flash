@@ -23,6 +23,10 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.compose.ui.res.stringResource
+import com.progeo.core.legal.ImpressumScreen
+import com.progeo.luaflasher.BuildConfig
+import com.progeo.luaflasher.R
 import com.progeo.luaflasher.ui.bundles.BundlesScreen
 import com.progeo.luaflasher.ui.flash.FlashScreen
 import com.progeo.luaflasher.ui.home.HomeScreen
@@ -39,6 +43,12 @@ private enum class Tab(val route: String, val label: String, val icon: ImageVect
     MONITOR("monitor", "Monitor", Icons.Default.Terminal),
     SETTINGS("settings", "Settings", Icons.Default.Settings),
 }
+
+/** Third-party software of this app on top of progeo-core's. */
+private val APP_LICENSES = listOf(
+    "usb-serial-for-android" to "MIT License",
+    "Tink" to "Apache License 2.0",
+)
 
 @Composable
 fun AppNavigation() {
@@ -95,7 +105,15 @@ fun AppNavigation() {
                 )
             }
             composable(Tab.MONITOR.route) { MonitorScreen() }
-            composable(Tab.SETTINGS.route) { SettingsScreen() }
+            composable(Tab.SETTINGS.route) { SettingsScreen(onImpressum = { nav.navigate("impressum") }) }
+            composable("impressum") {
+                ImpressumScreen(
+                    appName = stringResource(R.string.app_name),
+                    appVersion = BuildConfig.VERSION_NAME,
+                    onBack = { nav.popBackStack() },
+                    extraLicenses = APP_LICENSES,
+                )
+            }
             composable(
                 "flash?profile={profile}",
                 arguments = listOf(navArgument("profile") { type = NavType.StringType; nullable = true; defaultValue = null }),

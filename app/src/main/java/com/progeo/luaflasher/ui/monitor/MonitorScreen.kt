@@ -45,7 +45,7 @@ import com.progeo.luaflasher.AppGraph
 import com.progeo.luaflasher.core.FlasherException
 import com.progeo.luaflasher.flash.FlashState
 import com.progeo.luaflasher.graph
-import com.progeo.luaflasher.ui.MessageCard
+import com.progeo.core.ui.MessageCard
 import com.progeo.luaflasher.ui.shareText
 import com.progeo.luaflasher.usb.AndroidSerialPort
 import kotlinx.coroutines.Job

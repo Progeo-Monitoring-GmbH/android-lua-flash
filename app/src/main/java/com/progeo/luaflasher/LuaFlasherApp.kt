@@ -2,9 +2,9 @@ package com.progeo.luaflasher
 
 import android.app.Application
 import android.content.Context
-import com.progeo.luaflasher.backend.BackendClient
+import com.progeo.core.auth.BackendClient
 import com.progeo.luaflasher.backend.DeviceConfigApi
-import com.progeo.luaflasher.backend.EncryptedTokenStore
+import com.progeo.core.auth.EncryptedTokenStore
 import com.progeo.luaflasher.backend.LocationApi
 import com.progeo.luaflasher.core.bundle.PublicKeys
 import com.progeo.luaflasher.core.bundle.SignatureVerifier
@@ -14,7 +14,7 @@ import com.progeo.luaflasher.data.AppSettings
 import com.progeo.luaflasher.data.BundleStore
 import com.progeo.luaflasher.data.ChannelClient
 import com.progeo.luaflasher.data.ProfileStore
-import com.progeo.luaflasher.data.SecretCipher
+import com.progeo.core.security.SecretCipher
 import com.progeo.luaflasher.data.SettingsRepository
 import com.progeo.luaflasher.data.SyncRepository
 import com.progeo.luaflasher.data.SyncWorker
@@ -52,7 +52,8 @@ class AppGraph(context: Context) {
     val bundles = BundleStore(File(context.filesDir, "bundles"))
     val channels = ChannelClient(http, verifier, File(context.filesDir, "channels"))
     val sync = SyncRepository(settings, channels, bundles, File(context.filesDir, "downloads"), BuildConfig.VERSION_CODE)
-    val profiles = ProfileStore(File(context.filesDir, "profiles.json"), SecretCipher(), fieldKind)
+    // Same key alias as before the move to progeo-core: existing profiles stay readable.
+    val profiles = ProfileStore(File(context.filesDir, "profiles.json"), SecretCipher("profile-secrets"), fieldKind)
     val usb = UsbSerialManager(context)
     val flash = FlashSession(context, bundles, usb, settings)
     val boardReader = BoardConfigReader(usb, flash)
