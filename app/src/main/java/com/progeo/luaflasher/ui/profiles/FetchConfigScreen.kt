@@ -39,14 +39,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.progeo.luaflasher.AppGraph
 import com.progeo.luaflasher.backend.AuthState
-import com.progeo.luaflasher.backend.LoginResult
 import com.progeo.luaflasher.backend.RemoteConfig
 import com.progeo.luaflasher.backend.RemoteDevice
 import com.progeo.luaflasher.core.FlasherException
@@ -54,17 +52,14 @@ import com.progeo.luaflasher.core.config.LuaJson
 import com.progeo.luaflasher.core.config.LuaParseException
 import com.progeo.luaflasher.data.RemoteSource
 import com.progeo.luaflasher.graph
+import com.progeo.luaflasher.ui.LoginForm
+import com.progeo.luaflasher.ui.LoginFormState
 import com.progeo.luaflasher.ui.MessageCard
 import com.progeo.luaflasher.ui.Section
 import kotlinx.coroutines.launch
 
 class FetchConfigViewModel : ViewModel() {
-    // login
-    var username by mutableStateOf("")
-    var password by mutableStateOf("")
-    var otp by mutableStateOf("")
-    var otpNeeded by mutableStateOf(false)
-    var loginError by mutableStateOf<String?>(null)
+    val loginForm = LoginFormState()
 
     // devices
     var locationId by mutableStateOf("")
@@ -127,24 +122,9 @@ class FetchConfigViewModel : ViewModel() {
         }
     }
 
-    fun login(graph: AppGraph) = task {
-        loginError = null
-        when (val r = graph.backend.login(username, password, otp.takeIf { otpNeeded })) {
-            LoginResult.Success -> {
-                password = ""
-                otp = ""
-                otpNeeded = false
-                if (locationId.isNotEmpty()) loadDevicesNow(graph)
-            }
-            LoginResult.OtpRequired -> {
-                otpNeeded = true
-                loginError = "Enter the code from your authenticator app."
-            }
-            LoginResult.OtpInvalid -> {
-                otp = ""
-                loginError = "The code is wrong or was already used. Try the next one."
-            }
-            is LoginResult.Failed -> loginError = r.message
+    fun login(graph: AppGraph) {
+        viewModelScope.launch {
+            if (loginForm.submit(graph) && locationId.isNotEmpty()) task { loadDevicesNow(graph) }
         }
     }
 
@@ -229,7 +209,7 @@ fun FetchConfigScreen(onBack: () -> Unit, onSaved: (String) -> Unit) {
                 Text(if (vm.showServer) "Hide the server route" else "Board not at hand? Fetch via the ProGeo server…")
             }
             if (vm.showServer) when (val a = auth) {
-                AuthState.LoggedOut -> LoginForm(vm, graph)
+                AuthState.LoggedOut -> LoginForm(vm.loginForm, onSubmit = { vm.login(graph) })
                 is AuthState.LoggedIn -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Signed in as ${a.username ?: "?"}" + if (a.claims?.isDemo == true) " (demo, read-only)" else "", modifier = Modifier.weight(1f))
@@ -275,47 +255,6 @@ private fun BoardSection(vm: FetchConfigViewModel, graph: AppGraph, onSaved: (St
             }
         }
         vm.boardError?.let { MessageCard(it) }
-    }
-}
-
-@Composable
-private fun LoginForm(vm: FetchConfigViewModel, graph: AppGraph) {
-    Section("ProGeo login") {
-        Text("Your account needs the device permissions and access to the project's location.", style = MaterialTheme.typography.bodySmall)
-        OutlinedTextField(
-            value = vm.username,
-            onValueChange = { vm.username = it },
-            label = { Text("User name or email") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, autoCorrectEnabled = false),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = vm.password,
-            onValueChange = { vm.password = it },
-            label = { Text("Password") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if (vm.otpNeeded) {
-            OutlinedTextField(
-                value = vm.otp,
-                onValueChange = { vm.otp = it.trim() },
-                label = { Text("Two-factor code") },
-                supportingText = { Text("From the authenticator app, or a recovery code") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        vm.loginError?.let { MessageCard(it) }
-        Button(
-            onClick = { vm.login(graph) },
-            enabled = !vm.busy && vm.username.isNotBlank() && vm.password.isNotEmpty() && (!vm.otpNeeded || vm.otp.isNotEmpty()),
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (vm.busy) "Logging in…" else "Log in") }
     }
 }
 

@@ -1,7 +1,13 @@
 package com.progeo.luaflasher.ui
 
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.os.Build
+import android.os.PersistableBundle
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -59,6 +65,28 @@ fun shareText(context: Context, fileName: String, text: String) {
         .putExtra(Intent.EXTRA_STREAM, uri)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     context.startActivity(Intent.createChooser(intent, "Share log"))
+}
+
+/**
+ * Copies [text] to the clipboard, marked as sensitive (configs hold the Wi-Fi password and
+ * the server token): Android 13+ then hides it from the clipboard preview and confirms the
+ * copy itself; older versions get a toast.
+ */
+fun copyToClipboard(context: Context, label: String, text: String) {
+    val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
+    val clip = ClipData.newPlainText(label, text)
+    clip.description.extras = PersistableBundle().apply {
+        putBoolean(if (Build.VERSION.SDK_INT >= 33) ClipDescription.EXTRA_IS_SENSITIVE else "android.content.extra.IS_SENSITIVE", true)
+    }
+    clipboard.setPrimaryClip(clip)
+    if (Build.VERSION.SDK_INT < 33) Toast.makeText(context, "Copied to the clipboard", Toast.LENGTH_SHORT).show()
+}
+
+/** The text on the clipboard, or null if there is none. */
+fun clipboardText(context: Context): String? {
+    val clip = context.getSystemService(ClipboardManager::class.java)?.primaryClip ?: return null
+    if (clip.itemCount == 0) return null
+    return clip.getItemAt(0).coerceToText(context)?.toString()?.takeIf { it.isNotBlank() }
 }
 
 fun formatBytes(bytes: Long): String = when {

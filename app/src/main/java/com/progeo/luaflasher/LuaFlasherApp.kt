@@ -5,6 +5,7 @@ import android.content.Context
 import com.progeo.luaflasher.backend.BackendClient
 import com.progeo.luaflasher.backend.DeviceConfigApi
 import com.progeo.luaflasher.backend.EncryptedTokenStore
+import com.progeo.luaflasher.backend.LocationApi
 import com.progeo.luaflasher.core.bundle.PublicKeys
 import com.progeo.luaflasher.core.bundle.SignatureVerifier
 import com.progeo.luaflasher.core.config.ConfigTemplate
@@ -65,6 +66,7 @@ class AppGraph(context: Context) {
         base = http,
     )
     val deviceConfigs = DeviceConfigApi(backend)
+    val locations = LocationApi(backend)
 
     init {
         appScope.launch { settings.settings.collect { backendUrl = it.backendUrl } }
