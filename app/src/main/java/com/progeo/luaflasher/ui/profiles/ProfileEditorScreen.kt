@@ -1,23 +1,19 @@
 package com.progeo.luaflasher.ui.profiles
 
-import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Save
@@ -33,7 +29,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Switch
@@ -64,12 +59,11 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.progeo.core.UserFacingException
+import com.progeo.core.qr.CodeScanDialog
+import com.progeo.core.ui.MessageCard
+import com.progeo.core.ui.copyToClipboard
 import com.progeo.luaflasher.AppGraph
-import com.progeo.luaflasher.backend.RemoteDevice
-import com.progeo.luaflasher.backend.RemoteLocation
 import com.progeo.luaflasher.core.config.Choice
 import com.progeo.luaflasher.core.config.ConfigChoices
 import com.progeo.luaflasher.core.config.ConfigCode
@@ -79,18 +73,10 @@ import com.progeo.luaflasher.core.config.ConfigValidator
 import com.progeo.luaflasher.core.config.DeviceConfigBuilder
 import com.progeo.luaflasher.core.config.FieldKind
 import com.progeo.luaflasher.core.config.LuaJson
-import com.progeo.luaflasher.core.config.LuaParseException
 import com.progeo.luaflasher.core.config.LuaValue
 import com.progeo.luaflasher.core.config.Severity
 import com.progeo.luaflasher.data.Profile
-import com.progeo.luaflasher.data.RemoteSource
 import com.progeo.luaflasher.graph
-import com.progeo.core.qr.CodeScanDialog
-import com.progeo.core.ui.MessageCard
-import com.progeo.core.ui.clipboardText
-import com.progeo.core.ui.copyToClipboard
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -99,12 +85,15 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.util.UUID
 
+/**
+ * Editing a profile. Profiles come from a config QR code (a new profile opens the scanner) or
+ * are read from a board over USB (Read from controller); here every value can be changed.
+ */
 class ProfileEditorViewModel : ViewModel() {
     var loaded by mutableStateOf(false)
     var template by mutableStateOf<ConfigTemplate?>(null)
     var name by mutableStateOf("")
     var config by mutableStateOf(JsonObject(emptyMap()))
-    var source: RemoteSource? = null
     var boardReadAt: String? = null
     var profileId: String? = null
     var saving by mutableStateOf(false)
@@ -128,10 +117,9 @@ class ProfileEditorViewModel : ViewModel() {
             profileId = profile.id
             name = profile.name
             config = profile.config
-            source = profile.source
             boardReadAt = profile.boardReadAt
         } else {
-            // A new profile starts with the template's defaults, all editable.
+            // A new profile: the template's defaults, completed by the scanned config code.
             config = t.defaults()
         }
         loaded = true
@@ -187,43 +175,16 @@ class ProfileEditorViewModel : ViewModel() {
         if (jsonError == null) jsonText = null
     }
 
-    /** The Lua tab's text while it differs from [config] (being edited); null shows the generated file. */
-    var luaText by mutableStateOf<String?>(null)
-        private set
-    var luaError by mutableStateOf<String?>(null)
-        private set
+    /** The file as it is flashed (read-only Lua tab). */
+    fun lua(): String = template?.let { runCatching { DeviceConfigBuilder.lua(it, config) }.getOrElse { e -> "-- ${e.message}" } }.orEmpty()
 
-    fun luaShown(): String = luaText
-        ?: template?.let { runCatching { DeviceConfigBuilder.lua(it, config) }.getOrElse { e -> "-- ${e.message}" } }.orEmpty()
-
-    /** Editing (or pasting) a whole device_config.lua: every file that parses becomes the config right away. */
-    fun setLua(text: String) {
-        luaText = text
-        val parsed = try {
-            LuaJson.parse(text)
-        } catch (e: LuaParseException) {
-            luaError = e.message ?: "not a valid config file"
-            return
-        } catch (e: Exception) {
-            luaError = "not a valid config file: ${e.message ?: e.javaClass.simpleName}"
-            return
-        }
-        replaceConfig(parsed)
-        luaText = text
-    }
-
-    /** Leaving the Lua tab: a valid file is shown as generated next time; broken text stays for fixing. */
-    fun leaveLua() {
-        if (luaError == null) luaText = null
-    }
-
-    /** The error of the tab that holds unparsed text, if any; the config is its last valid state. */
-    val textError: String?
-        get() = luaError?.let { "Lua tab: $it" } ?: jsonError?.let { "JSON tab: $it" }
-
-    // ---- new profile: a config from a QR code
+    // ---- new profile: the config from a QR code
 
     var scanning by mutableStateOf(false)
+
+    /** A valid config code was scanned; a new profile can only be saved after that. */
+    var hasScan by mutableStateOf(false)
+        private set
 
     /** What the last scan did: message and whether it is an error. */
     var scanResult by mutableStateOf<Pair<String, Boolean>?>(null)
@@ -237,167 +198,29 @@ class ProfileEditorViewModel : ViewModel() {
             is ConfigCode.Result.Invalid -> r.reason to true
             is ConfigCode.Result.Valid -> {
                 replaceConfig(LuaJson.merge(config, r.config))
+                hasScan = true
+                if (name.isBlank()) name = (LuaJson.get(config, DeviceConfigBuilder.DEVICE_HASH) as? JsonPrimitive)?.content.orEmpty()
                 val shown = r.paths.take(8).joinToString() + if (r.paths.size > 8) ", …" else ""
                 "Added ${r.paths.size} value${if (r.paths.size == 1) "" else "s"} from the QR code: $shown. Check them and save." to false
             }
         }
     }
 
-    /** A whole new config: every unfinished edit (field drafts, broken Lua/JSON text) is dropped. */
+    /** A whole new config: every unfinished edit (field drafts, broken JSON text) is dropped. */
     private fun replaceConfig(newConfig: JsonObject) {
         config = newConfig
         drafts.clear()
         invalid.clear()
         jsonText = null
         jsonError = null
-        luaText = null
-        luaError = null
     }
 
     fun profile() = Profile(
         id = profileId ?: UUID.randomUUID().toString(),
         name = name.trim().ifEmpty { (LuaJson.get(config, DeviceConfigBuilder.DEVICE_HASH) as? JsonPrimitive)?.content ?: "profile" },
         config = config,
-        source = source,
         boardReadAt = boardReadAt,
     )
-
-    // ---- new profile: pick the location, then load its controller's config from the server
-
-    var locations by mutableStateOf<List<RemoteLocation>?>(null)
-        private set
-    var locationQuery by mutableStateOf("")
-    var location by mutableStateOf<RemoteLocation?>(null)
-        private set
-    var devices by mutableStateOf<List<RemoteDevice>?>(null)
-        private set
-    var device by mutableStateOf<RemoteDevice?>(null)
-        private set
-    var requestStatus by mutableStateOf<String?>(null)
-        private set
-    var locationStep by mutableStateOf(true)
-    var locationProgress by mutableStateOf<String?>(null)
-        private set
-    var locationError by mutableStateOf<String?>(null)
-        private set
-    var locationInfo by mutableStateOf<String?>(null)
-        private set
-    private var locationJob: Job? = null
-    private var locationGeneration = 0
-
-    /** Runs [block], cancelling the previous step (a new location or controller replaces it). */
-    private fun locationTask(progress: String, block: suspend () -> Unit) {
-        locationJob?.cancel()
-        val generation = ++locationGeneration
-        locationError = null
-        locationProgress = progress
-        locationJob = viewModelScope.launch {
-            try {
-                block()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: UserFacingException) {
-                if (generation == locationGeneration) locationError = e.userMessage
-            } catch (e: Exception) {
-                if (generation == locationGeneration) locationError = e.message ?: e.javaClass.simpleName
-            } finally {
-                // A cancelled step finishes after its successor started: leave the successor's progress alone.
-                if (generation == locationGeneration) locationProgress = null
-            }
-        }
-    }
-
-    fun loadLocations(graph: AppGraph, force: Boolean = false) {
-        if (locations != null && !force) return
-        locationTask("Loading locations…") { locations = graph.locations.locations() }
-    }
-
-    /** The template's defaults with the project id of the chosen location (and the controller's hash). */
-    private fun startConfig(projectId: Long?, deviceHash: String?): JsonObject {
-        val t = template ?: return config
-        var c = t.defaults()
-        fun put(path: String, text: String) {
-            LuaJson.typed(text, t.field(path)?.kind ?: FieldKind.STRING)?.let { c = LuaJson.with(c, path, it) }
-        }
-        projectId?.let { put("device.project_id", it.toString()) }
-        deviceHash?.let { put(DeviceConfigBuilder.DEVICE_HASH, it) }
-        return c
-    }
-
-    fun selectLocation(graph: AppGraph, loc: RemoteLocation) {
-        location = loc
-        device = null
-        devices = null
-        source = null
-        requestStatus = null
-        locationInfo = null
-        replaceConfig(startConfig(loc.projectId, null))
-        locationTask("Looking for controllers at ${loc.title}…") {
-            val found = graph.deviceConfigs.devices(loc.id.toString())
-            devices = found
-            when (found.size) {
-                0 -> locationInfo = "No controller is registered at this location yet. The profile starts from the template defaults" +
-                    (loc.projectId?.let { " with project id $it." } ?: ".")
-                1 -> fetchConfig(graph, loc, found.single())
-                else -> locationInfo = "${found.size} controllers at this location. Choose the one to load its config."
-            }
-        }
-    }
-
-    fun selectDevice(graph: AppGraph, d: RemoteDevice) {
-        val loc = location ?: return
-        locationTask("Asking the server for the config of ${d.hash ?: d.label}…") { fetchConfig(graph, loc, d) }
-    }
-
-    private suspend fun fetchConfig(graph: AppGraph, loc: RemoteLocation, d: RemoteDevice) {
-        device = d
-        source = null
-        locationInfo = null
-        locationProgress = "Asking the server for the config of ${d.hash ?: d.label}…"
-        replaceConfig(startConfig(loc.projectId, d.hash))
-        val remote = graph.deviceConfigs.config(d.id, loc.id.toString())
-        requestStatus = remote.requestStatus
-        val content = remote.content
-        if (content == null) {
-            locationInfo = "The server has no config of ${d.hash ?: d.label} yet. The profile starts from the template defaults " +
-                "with its project id and device hash."
-            return
-        }
-        val fetched = try {
-            LuaJson.parse(content)
-        } catch (e: LuaParseException) {
-            locationError = "The controller's config could not be read: ${e.message}"
-            return
-        }
-        replaceConfig(fetched)
-        val hash = remote.rawHash ?: d.hash
-        source = RemoteSource(loc.id.toString(), remote.deviceId, hash, remote.fetchedAt, remote.commandId)
-        if (name.isBlank()) name = (LuaJson.get(fetched, DeviceConfigBuilder.DEVICE_HASH) as? JsonPrimitive)?.content ?: hash.orEmpty()
-        locationInfo = "Loaded the config ${hash ?: "the controller"} sent" + (remote.fetchedAt?.let { " on ${it.take(16).replace('T', ' ')}" } ?: "") + "."
-    }
-
-    fun requestConfig(graph: AppGraph) {
-        val loc = location ?: return
-        val d = device ?: return
-        locationTask("Requesting the config…") {
-            graph.deviceConfigs.requestConfig(d.id, loc.id.toString())
-            requestStatus = graph.deviceConfigs.config(d.id, loc.id.toString()).requestStatus ?: "pending"
-            locationInfo = "Requested. The controller sends its config the next time it checks for commands; " +
-                "then read it under Profiles → Read from controller."
-        }
-    }
-
-    fun changeLocation() {
-        locationJob?.cancel()
-        locationGeneration++
-        locationProgress = null
-        location = null
-        devices = null
-        device = null
-        requestStatus = null
-        locationInfo = null
-        locationError = null
-    }
 }
 
 private val prettyJson = Json { prettyPrint = true }
@@ -411,11 +234,15 @@ fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Un
     val scope = rememberCoroutineScope()
     LaunchedEffect(id) { vm.load(graph, id) }
     val template = vm.template
+    val isNew = id == null
     var tab by remember { mutableIntStateOf(0) }
+
+    // A new profile starts with the scanner; without a scanned config there is nothing to save.
+    LaunchedEffect(vm.loaded) { if (isNew && vm.loaded && !vm.hasScan && vm.scanResult == null) vm.scanning = true }
 
     val built = template?.let { runCatching { DeviceConfigBuilder.build(it, vm.config) }.getOrNull() }
     val issues = if (template != null && built != null) ConfigValidator.validate(template, built) else emptyList()
-    val canSave = vm.loaded && !vm.saving && vm.invalid.isEmpty() && vm.textError == null &&
+    val canSave = vm.loaded && !vm.saving && (!isNew || vm.hasScan) && vm.invalid.isEmpty() && vm.jsonError == null &&
         issues.none { it.severity == Severity.ERROR && it.path != DeviceConfigBuilder.DEVICE_HASH }
 
     fun save(then: (Profile) -> Unit) {
@@ -434,10 +261,10 @@ fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Un
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
-            title = { Text(if (id == null) "New profile" else vm.name.ifEmpty { "Profile" }) },
+            title = { Text(if (isNew) "New profile" else vm.name.ifEmpty { "Profile" }) },
             navigationIcon = { IconButton(onClick = onDone) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
             actions = {
-                if (id == null) {
+                if (isNew) {
                     IconButton(onClick = { vm.scanning = true }, enabled = vm.loaded) {
                         Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan a config QR code")
                     }
@@ -447,7 +274,6 @@ fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Un
         TabRow(selectedTabIndex = tab) {
             listOf("Values", "Lua", "JSON").forEachIndexed { i, title ->
                 Tab(selected = tab == i, onClick = {
-                    if (tab == 1 && i != 1) vm.leaveLua()
                     if (tab == 2 && i != 2) vm.leaveJson()
                     tab = i
                 }, text = { Text(title) })
@@ -468,16 +294,8 @@ fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Un
             ) {
                 when (tab) {
                     0 -> {
-                        if (id == null && vm.loaded) {
-                            NewProfileLocation(vm, graph)
-                            OutlinedButton(onClick = { vm.scanning = true }, modifier = Modifier.fillMaxWidth()) {
-                                Icon(Icons.Default.QrCodeScanner, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Text("Scan a config QR code")
-                            }
-                            vm.scanResult?.let { (text, error) -> MessageCard(text, error) }
-                        }
-                        vm.textError?.let { MessageCard("$it. These values are its last valid state.") }
+                        if (isNew) vm.scanResult?.let { (text, error) -> MessageCard(text, error) }
+                        vm.jsonError?.let { MessageCard("JSON tab: $it. These values are its last valid state.") }
                         OutlinedTextField(
                             value = vm.name,
                             onValueChange = { vm.name = it },
@@ -489,31 +307,14 @@ fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Un
                         vm.boardReadAt?.let {
                             Text("Read from the board over USB, ${it.replace('T', ' ')}", style = MaterialTheme.typography.bodySmall)
                         }
-                        vm.source?.let { s ->
-                            Text(
-                                "Fetched from controller ${s.rawHash ?: s.deviceId} (location ${s.locationId})" + (s.fetchedAt?.let { ", $it" } ?: ""),
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
                         Text(
                             "Every value of device_config.lua. Empty fields are left out; when flashing, the bundle's template fills in its defaults.",
                             style = MaterialTheme.typography.bodySmall,
                         )
                         if (template != null) ObjectEditor(vm, "", vm.config, template.root, issues, depth = 0)
                     }
-                    1 -> if (id == null) {
-                        // A new profile can start from a device_config.lua pasted from elsewhere.
-                        TextTools(
-                            "Paste or edit a whole device_config.lua. As soon as it parses, the other tabs show it.",
-                            onCopy = { copyToClipboard(context, "device_config.lua", vm.luaShown()) },
-                            onPaste = {
-                                val text = clipboardText(context)
-                                if (text == null) Toast.makeText(context, "The clipboard is empty", Toast.LENGTH_SHORT).show() else vm.setLua(text)
-                            },
-                        )
-                        CodeField(vm.luaShown(), vm::setLua, vm.luaError)
-                    } else {
-                        val lua = vm.luaShown()
+                    1 -> {
+                        val lua = vm.lua()
                         TextTools("The file as it is flashed: config/device_config.lua.", onCopy = { copyToClipboard(context, "device_config.lua", lua) })
                         CodeCard(lua)
                     }
@@ -560,7 +361,11 @@ fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Un
 
     if (vm.scanning) {
         CodeScanDialog(
-            onDismiss = { vm.scanning = false },
+            onDismiss = {
+                vm.scanning = false
+                // Closed without a config: a new profile has nothing to show, back to the list.
+                if (isNew && !vm.hasScan) onDone()
+            },
             onCode = {
                 vm.scanned(it)
                 tab = 0 // the result shows on the Values tab
@@ -579,12 +384,9 @@ private fun disabledFab(): Color = MaterialTheme.colorScheme.onSurface.copy(alph
 private fun disabledFabContent(): Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
 
 @Composable
-private fun TextTools(text: String, onCopy: () -> Unit, onPaste: (() -> Unit)? = null) {
+private fun TextTools(text: String, onCopy: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         Text(text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-        if (onPaste != null) {
-            IconButton(onClick = onPaste) { Icon(Icons.Default.ContentPaste, contentDescription = "Replace with the clipboard") }
-        }
         IconButton(onClick = onCopy) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy to the clipboard") }
     }
 }

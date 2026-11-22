@@ -14,14 +14,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -44,8 +43,12 @@ import com.progeo.luaflasher.graph
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
 
+/**
+ * The profiles on the phone. A profile is created in one of two ways: from a config QR code
+ * ([onScan]: the editor opens with the scanner) or read from a board over USB ([onRead]).
+ */
 @Composable
-fun ProfilesScreen(onEdit: (String?) -> Unit, onFetch: () -> Unit, onFlash: (String) -> Unit) {
+fun ProfilesScreen(onEdit: (String) -> Unit, onScan: () -> Unit, onRead: () -> Unit, onFlash: (String) -> Unit) {
     val context = LocalContext.current
     val graph = context.graph
     val scope = rememberCoroutineScope()
@@ -55,24 +58,32 @@ fun ProfilesScreen(onEdit: (String?) -> Unit, onFetch: () -> Unit, onFlash: (Str
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 96.dp),
+            contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item { Text("Profiles", style = MaterialTheme.typography.headlineMedium) }
             item {
                 Text(
-                    "A profile is a complete device_config.lua. Read it from a controller over USB (named after its device hash) or create one; every value can be edited. Profiles are encrypted on the phone.",
+                    "A profile is a complete device_config.lua, named after its device hash. Scan it from a config QR code " +
+                        "or read it from a controller over USB; then every value can be edited. Profiles are encrypted on the phone.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
             item {
-                Button(onClick = onFetch, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.CloudDownload, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Read from controller")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onScan, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.QrCodeScanner, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Scan QR code")
+                    }
+                    Button(onClick = onRead, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Usb, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Read from controller")
+                    }
                 }
             }
-            if (profiles.isEmpty()) item { Text("No profiles yet. Read one from a controller or add one.") }
+            if (profiles.isEmpty()) item { Text("No profiles yet. Scan a config QR code or read one from a controller.") }
             items(profiles, key = { it.id }) { p ->
                 Card(
                     Modifier
@@ -96,13 +107,6 @@ fun ProfilesScreen(onEdit: (String?) -> Unit, onFetch: () -> Unit, onFlash: (Str
                                     color = MaterialTheme.colorScheme.primary,
                                 )
                             }
-                            p.source?.let { s ->
-                                Text(
-                                    "from controller · location ${s.locationId}" + (s.fetchedAt?.let { " · ${it.take(16).replace('T', ' ')}" } ?: ""),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                            }
                         }
                         IconButton(onClick = { onFlash(p.id) }) { Icon(Icons.Default.FlashOn, contentDescription = "Flash") }
                         IconButton(onClick = { confirmDelete = p }) { Icon(Icons.Default.Delete, contentDescription = "Delete") }
@@ -110,14 +114,6 @@ fun ProfilesScreen(onEdit: (String?) -> Unit, onFetch: () -> Unit, onFlash: (Str
                 }
             }
         }
-        ExtendedFloatingActionButton(
-            onClick = { onEdit(null) },
-            icon = { Icon(Icons.Default.Add, contentDescription = null) },
-            text = { Text("New profile") },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(16.dp),
-        )
     }
 
     confirmDelete?.let { p ->

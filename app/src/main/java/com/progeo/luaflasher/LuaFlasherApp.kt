@@ -3,9 +3,7 @@ package com.progeo.luaflasher
 import android.app.Application
 import android.content.Context
 import com.progeo.core.auth.BackendClient
-import com.progeo.luaflasher.backend.DeviceConfigApi
 import com.progeo.core.auth.EncryptedTokenStore
-import com.progeo.luaflasher.backend.LocationApi
 import com.progeo.luaflasher.core.bundle.PublicKeys
 import com.progeo.luaflasher.core.bundle.SignatureVerifier
 import com.progeo.luaflasher.core.config.ConfigTemplate
@@ -66,8 +64,6 @@ class AppGraph(context: Context) {
         tokens = EncryptedTokenStore(File(context.noBackupFilesDir, "backend-tokens.bin"), SecretCipher("backend-tokens")),
         base = http,
     )
-    val deviceConfigs = DeviceConfigApi(backend)
-    val locations = LocationApi(backend)
 
     init {
         appScope.launch { settings.settings.collect { backendUrl = it.backendUrl } }

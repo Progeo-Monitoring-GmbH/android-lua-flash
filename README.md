@@ -16,6 +16,10 @@ Requirements: JDK 17+ (Android Studio's JBR works), Android SDK with platform 36
 In VS Code: **Ctrl+Shift+B** runs *Android: Run on device* (install on the phone connected via adb,
 then start the app); *Terminal → Run Task… → Android: Build APK* builds the debug APK. See `.vscode/tasks.json`.
 
+*Android: Screenshots* (`tools/screenshots.ps1`) takes a screenshot of every view on an emulator (created if
+missing) into `docs/screenshots/`, one image per page in its full height (scrolled and stitched by `tools/Stitcher.cs`). It asks for your ProGeo login (and two-factor code) in the terminal and never
+stores it; the flash wizard steps come from the debug-only `DemoStateReceiver`.
+
 The public signing keys come from `keys/firmware-signing.pub.json`; the build fails without it. Debug builds
 can add a local test key with `-PextraFirmwareKeys=<file>` (same JSON format), for bundles signed with
 `scripts/new_signing_key.ps1` and served from a local `dist/release-site/`.

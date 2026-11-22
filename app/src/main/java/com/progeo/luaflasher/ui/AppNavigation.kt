@@ -31,9 +31,9 @@ import com.progeo.luaflasher.ui.bundles.BundlesScreen
 import com.progeo.luaflasher.ui.flash.FlashScreen
 import com.progeo.luaflasher.ui.home.HomeScreen
 import com.progeo.luaflasher.ui.monitor.MonitorScreen
-import com.progeo.luaflasher.ui.profiles.FetchConfigScreen
 import com.progeo.luaflasher.ui.profiles.ProfileEditorScreen
 import com.progeo.luaflasher.ui.profiles.ProfilesScreen
+import com.progeo.luaflasher.ui.profiles.ReadFromControllerScreen
 import com.progeo.luaflasher.ui.settings.SettingsScreen
 
 private enum class Tab(val route: String, val label: String, val icon: ImageVector) {
@@ -86,8 +86,9 @@ fun AppNavigation() {
             composable(Tab.BUNDLES.route) { BundlesScreen() }
             composable(Tab.PROFILES.route) {
                 ProfilesScreen(
-                    onEdit = { id -> nav.navigate("profile/${id ?: "new"}") },
-                    onFetch = { nav.navigate("fetch") },
+                    onEdit = { id -> nav.navigate("profile/$id") },
+                    onScan = { nav.navigate("profile/new") },
+                    onRead = { nav.navigate("read") },
                     onFlash = { id -> nav.navigate("flash?profile=$id") },
                 )
             }
@@ -98,8 +99,8 @@ fun AppNavigation() {
                     onFlash = { id -> nav.navigate("flash?profile=$id") { popUpTo(Tab.PROFILES.route) } },
                 )
             }
-            composable("fetch") {
-                FetchConfigScreen(
+            composable("read") {
+                ReadFromControllerScreen(
                     onBack = { nav.popBackStack() },
                     onSaved = { id -> nav.navigate("profile/$id") { popUpTo(Tab.PROFILES.route) } },
                 )

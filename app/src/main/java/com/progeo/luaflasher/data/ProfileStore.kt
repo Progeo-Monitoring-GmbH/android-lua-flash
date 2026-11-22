@@ -18,27 +18,17 @@ import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 import java.util.UUID
 
-/** Where a profile came from, when it was fetched from a controller (API2.md). */
-@Serializable
-data class RemoteSource(
-    val locationId: String,
-    val deviceId: Long,
-    val rawHash: String? = null,
-    val fetchedAt: String? = null,
-    val commandId: Long? = null,
-)
-
 /**
  * A device configuration: the content of `device_config.lua` as JSON, so every value can be
- * edited. Fetched profiles are named after their `device.device_hash`. When flashing, the
- * bundle's template supplies defaults for anything the profile does not set.
+ * edited. Profiles come from a config QR code or are read from a board over USB, and are named
+ * after their `device.device_hash`. When flashing, the bundle's template supplies defaults for
+ * anything the profile does not set.
  */
 @Serializable
 data class Profile(
     val id: String = UUID.randomUUID().toString(),
     val name: String,
     val config: JsonObject = JsonObject(emptyMap()),
-    val source: RemoteSource? = null,
     /** When the config was read from a board over USB (ISO time), if it was. */
     val boardReadAt: String? = null,
 ) {
@@ -48,7 +38,8 @@ data class Profile(
 
 /**
  * Profiles on disk. The config of each profile is encrypted as a whole with an Android
- * Keystore key: a fetched config contains the Wi-Fi password and the server token.
+ * Keystore key: a config contains the Wi-Fi password and the server token.
+ * Fields older versions stored (e.g. the server `source` of fetched profiles) are ignored on load.
  */
 class ProfileStore(
     private val file: File,
@@ -63,7 +54,6 @@ class ProfileStore(
         val name: String,
         /** base64(iv + AES-GCM(config JSON)) */
         val config: String? = null,
-        val source: RemoteSource? = null,
         val boardReadAt: String? = null,
         // format 1: dotted paths, secrets separately
         val values: Map<String, String> = emptyMap(),
@@ -86,7 +76,7 @@ class ProfileStore(
                 stored.profiles.map { p ->
                     val config = p.config?.let { BundleFormat.json.decodeFromString<JsonObject>(cipher.decrypt(it)) }
                         ?: fromDotted(p.values + p.secrets.mapValues { (_, v) -> cipher.decrypt(v) }, kindOf)
-                    Profile(p.id, p.name, config, p.source, p.boardReadAt)
+                    Profile(p.id, p.name, config, p.boardReadAt)
                 }.sortedBy { it.name.lowercase() }
             } else {
                 emptyList()
@@ -99,28 +89,13 @@ class ProfileStore(
     suspend fun delete(id: String) = write { list -> list.filter { it.id != id } }
 
     /**
-     * Stores a config fetched from a controller, named after its device hash. An existing
-     * profile of the same controller (or with the same name) is updated in place.
-     */
-    suspend fun saveFetched(config: JsonObject, source: RemoteSource): Profile {
-        val hash = (LuaJson.get(config, DeviceConfigBuilder.DEVICE_HASH) as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
-        val name = hash ?: source.rawHash ?: "device ${source.deviceId}"
-        val existing = _profiles.value.firstOrNull {
-            it.source?.deviceId == source.deviceId && it.source.locationId == source.locationId
-        } ?: _profiles.value.firstOrNull { it.name == name }
-        val profile = Profile(id = existing?.id ?: UUID.randomUUID().toString(), name = name, config = config, source = source)
-        save(profile)
-        return profile
-    }
-
-    /**
      * Stores a config read from a board over USB, named after its device hash. A profile with
      * that name is updated in place.
      */
     suspend fun saveFromBoard(config: JsonObject): Profile {
         val hash = (LuaJson.get(config, DeviceConfigBuilder.DEVICE_HASH) as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
         val now = java.time.OffsetDateTime.now().withNano(0).toString()
-        val name = hash ?: "board "
+        val name = hash ?: "board $now"
         val existing = _profiles.value.firstOrNull { it.name == name }
         val profile = Profile(id = existing?.id ?: UUID.randomUUID().toString(), name = name, config = config, boardReadAt = now)
         save(profile)
@@ -136,7 +111,6 @@ class ProfileStore(
                         id = p.id,
                         name = p.name,
                         config = cipher.encrypt(BundleFormat.json.encodeToString(JsonObject.serializer(), p.config)),
-                        source = p.source,
                         boardReadAt = p.boardReadAt,
                     )
                 },

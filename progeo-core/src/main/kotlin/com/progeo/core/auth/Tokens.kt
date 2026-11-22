@@ -10,9 +10,24 @@ import kotlinx.serialization.json.longOrNull
 import java.io.File
 import java.util.Base64
 
-/** The JWT pair of the backend (API.md). Both change on every refresh. */
+/**
+ * The session: normally the JWT pair of the backend (API.md), both of which change on every
+ * refresh. With [apiToken] it is the account's API token instead ([access] holds the key,
+ * [refresh] is empty): sent as `Token <key>`, never refreshed, [username] from the login.
+ * The new fields have defaults, so tokens stored by older versions still load.
+ */
 @Serializable
-data class Tokens(val access: String, val refresh: String)
+data class Tokens(
+    val access: String,
+    val refresh: String,
+    val apiToken: Boolean = false,
+    val username: String? = null,
+) {
+    /** The `Authorization` header value for this session. */
+    val authorization: String get() = if (apiToken) "Token $access" else "Bearer $access"
+
+    override fun toString() = "Tokens(…)" // never log a secret
+}
 
 interface TokenStore {
     fun load(): Tokens?

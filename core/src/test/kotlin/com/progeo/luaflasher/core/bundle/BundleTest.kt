@@ -71,7 +71,9 @@ class BundleTest {
         val path = System.getProperty("bundleZip") ?: return
         val zip = File(path).readBytes()
         val keys = PublicKeys.parse(Fixtures.publicKeysJson())
-        assertEquals("main", SignatureVerifier(keys).verify(zip, File("$path.sig").readText()))
+        // Any key of keys/firmware-signing.pub.json may have signed it (keys are rotated: main, 2026-a, …).
+        val keyId = SignatureVerifier(keys).verify(zip, File("$path.sig").readText())
+        assertTrue(keyId in keys.keys, "signed by $keyId")
         val bundle = BundleValidator.validate(zip)
         assertEquals(listOf(0x00000L, 0x10000L), bundle.flashSegments().map { it.address })
         ConfigTemplate.parse(bundle.template)

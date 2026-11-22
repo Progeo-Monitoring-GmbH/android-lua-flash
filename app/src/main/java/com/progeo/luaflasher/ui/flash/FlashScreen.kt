@@ -95,6 +95,16 @@ fun FlashScreen(profileId: String? = null, onClose: () -> Unit) {
     }
     BackHandler(enabled = state.isWorking) { /* never leave a running write by accident */ }
 
+    // Leaving the screen ends the job and releases the USB adapter, so the monitor and
+    // "Read from controller" can use it. Not while a write runs (leaving is blocked then),
+    // and not when the activity is only recreated (rotation).
+    DisposableEffect(Unit) {
+        onDispose {
+            val session = graph.flash
+            if (activity?.isChangingConfigurations != true && !session.state.value.isWorking) session.cancel()
+        }
+    }
+
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
             title = { Text(if (state == FlashState.Idle) "Flash a board" else "Flashing") },
@@ -333,7 +343,6 @@ private fun WizardContent(state: FlashState, setup: FlashSetupViewModel, onClose
     val context = LocalContext.current
     val graph = context.graph
     val log by graph.flash.log.collectAsState()
-    var showLog by remember { mutableStateOf(false) }
     val session = graph.flash
 
     Column(
@@ -423,15 +432,11 @@ private fun WizardContent(state: FlashState, setup: FlashSetupViewModel, onClose
                 Card(Modifier.fillMaxWidth()) {
                     Text(state.result.bootLog.filter { it == '\n' || it.code in 0x20..0x7E }, fontFamily = FontFamily.Monospace, fontSize = 11.sp, modifier = Modifier.padding(12.dp))
                 }
+                // Ends the job (USB adapter released) and leaves the screen.
                 Button(onClick = {
                     session.cancel()
-                    setup.nextBoard()
-                }, modifier = Modifier.fillMaxWidth()) { Text("Flash the next board") }
-                OutlinedButton(onClick = { shareText(context, "flash-log.txt", log) }, modifier = Modifier.fillMaxWidth()) { Text("Share log") }
-                OutlinedButton(onClick = {
-                    session.cancel()
                     onClose()
-                }, modifier = Modifier.fillMaxWidth()) { Text("Close") }
+                }, modifier = Modifier.fillMaxWidth()) { Text("Finish") }
             }
             is FlashState.Failed -> {
                 StepHeader("Something went wrong")
@@ -442,13 +447,6 @@ private fun WizardContent(state: FlashState, setup: FlashSetupViewModel, onClose
                 OutlinedButton(onClick = { session.cancel() }, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
             }
             FlashState.Idle -> Unit
-        }
-
-        TextButton(onClick = { showLog = !showLog }) { Text(if (showLog) "Hide log" else "Show log") }
-        if (showLog) {
-            Card(Modifier.fillMaxWidth()) {
-                Text(log.takeLast(8_000), fontFamily = FontFamily.Monospace, fontSize = 11.sp, modifier = Modifier.padding(12.dp))
-            }
         }
     }
 }

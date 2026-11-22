@@ -220,7 +220,7 @@ fun LoginScreen(
                     Text("Scan login code")
                 }
                 Text(
-                    "A login code is a QR code with a one-time login link of the ProGeo portal.",
+                    "The login QR code from the homepage of the ProGeo portal, or a one-time login link.",
                     style = MaterialTheme.typography.bodySmall,
                     color = ProGeoColors.TextMuted,
                 )

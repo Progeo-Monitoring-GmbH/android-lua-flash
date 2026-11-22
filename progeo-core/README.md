@@ -59,15 +59,19 @@ The login screen scans a QR code and logs in with it. Accepted contents (`LoginC
 | `https://<portal>/login/link/<token>`: the portal's one-time login link | `POST api/auth-support/login-link/exchange/` `{token, otp?}` |
 | `progeo://login?token=<token>` or `{"token": "<token>"}` or the bare token | same |
 | `progeo://login?refresh=<jwt>` or `{"refresh": "<jwt>"}` or the bare refresh JWT | `POST api/token/refresh/` |
+| `{"token": "<40 hex digits>"}` (the QR code on the portal's homepage), or that token bare / as `?token=` | not exchanged: checked with `GET v1/user/profile/`, then sent as `Authorization: Token <key>` on every call |
 
-Both are single use: the login link is marked used, the refresh token is blacklisted on rotation.
+The first two are single use: the login link is marked used, the refresh token is blacklisted on rotation.
+The homepage code is different: it carries the account's API token (DRF authtoken). It is reusable, does not
+expire, needs no two-factor code and is never refreshed; logging out only forgets it on the phone. It stops
+working only when it is revoked in the portal (then the next call gets a 401 and the app logs out).
 A login link asks for the two-factor code if the account has 2FA (the link stays valid meanwhile);
 staff accounts get no login links unless the server allows it (`MAGIC_LINK_ALLOW_STAFF`).
 The code never chooses the server: tokens only go to the server the app is configured for.
 
-The portal does not show login QR codes yet. The simplest addition there is a button on the
-profile page that creates a login link for the logged-in user (`helper/login_links.create_link`)
-and shows it as a QR code (`setup_viewset.qr_code_data_uri`), valid for `MAGIC_LINK_LOGIN_MINUTES`.
+Safer for the portal: show a one-time login link as the QR code instead of the API token
+(`helper/login_links.create_link`, rendered with `setup_viewset.qr_code_data_uri`, valid for
+`MAGIC_LINK_LOGIN_MINUTES`). The app reads both, so the portal can switch without an app update.
 
 ## Tests
 

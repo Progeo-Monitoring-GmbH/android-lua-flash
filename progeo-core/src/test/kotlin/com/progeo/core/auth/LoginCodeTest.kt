@@ -28,6 +28,19 @@ class LoginCodeTest {
         assertEquals(LoginCode.RefreshToken(refresh), LoginCode.parse("progeo://login?refresh=$refresh"))
     }
 
+    /** Made up; same form as a DRF authtoken key (40 hex digits), like the homepage QR code. */
+    private val apiKey = "0123456789abcdef0123456789abcdef01234567"
+
+    @Test
+    fun `api token of the homepage qr code`() {
+        assertEquals(LoginCode.ApiToken(apiKey), LoginCode.parse("""{"token": "$apiKey"}"""))
+        assertEquals(LoginCode.ApiToken(apiKey), LoginCode.parse(apiKey))
+        assertEquals(LoginCode.ApiToken(apiKey), LoginCode.parse("progeo://login?token=$apiKey"))
+        // a login link token (43 characters, base64url) stays a login token
+        assertEquals(LoginCode.LoginToken(token), LoginCode.parse("""{"token":"$token"}"""))
+        assertEquals("ApiToken(…)", LoginCode.ApiToken(apiKey).toString())
+    }
+
     @Test
     fun `other codes are refused`() {
         assertNull(LoginCode.parse(""))

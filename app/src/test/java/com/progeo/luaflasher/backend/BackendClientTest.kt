@@ -8,12 +8,12 @@ import com.progeo.core.auth.LoginResult
 import com.progeo.core.auth.NotLoggedInException
 import com.progeo.core.auth.TokenStore
 import com.progeo.luaflasher.core.config.FieldKind
-import com.progeo.luaflasher.core.config.LuaJson
 import com.progeo.luaflasher.data.ProfileStore
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
@@ -90,8 +90,6 @@ class BackendClientTest {
                             json(401, """{"detail":"Given token not valid for any token type","code":"token_not_valid"}""")
                         } else when (path) {
                             "/v1/device/" -> json(200, """[{"id":17,"raw_hash":"4711-01","name":"Hall A"},{"id":18,"raw_hash":"4711-02"}]""")
-                            "/v1/device/17/config/request/" -> json(200, """{"success":true,"command":{"id":812,"command":"get_config","status":"pending"},"pending_commands":["get_config"]}""")
-                            "/v1/device/17/config/" -> json(200, API2_CONFIG)
                             "/v1/pending/" -> json(403, """{"success":false,"reason":"Account pending review","pending_review":true}""")
                             "/v1/perm/" -> json(403, """{"success":false,"missing_permissions":["module_devices_commands"]}""")
                             else -> json(404, "{}")
@@ -124,25 +122,12 @@ class BackendClientTest {
     }
 
     @Test
-    fun `bearer header and location parameter on device calls`() = runBlocking<Unit> {
+    fun `bearer header on authenticated calls`() = runBlocking<Unit> {
         val c = client()
         c.login("jdoe", "secret", null)
-        val api = DeviceConfigApi(c)
-        val devices = api.devices("4711")
-        assertEquals(listOf("4711-01 · Hall A", "4711-02"), devices.map { it.label })
-        api.requestConfig(17, "4711")
-        val config = api.config(17, "4711")
-        assertEquals("4711-01", config.rawHash)
-        assertEquals("2026-11-09T19:40:03+00:00", config.fetchedAt)
-        assertNull(config.requestStatus)
-        assertEquals(7, config.resultTtlDays)
-        val parsed = LuaJson.parse(config.content!!)
-        assertEquals("4711-01", LuaJson.get(parsed, "device.device_hash")!!.jsonPrimitive.content)
-
-        val deviceCalls = requests.filter { it.path!!.startsWith("/v1/") }
-        assertTrue(deviceCalls.all { it.requestUrl!!.queryParameter("location") == "4711" })
-        assertTrue(deviceCalls.all { it.getHeader("Authorization")!!.startsWith("Bearer ") })
-        assertEquals("POST", deviceCalls.single { it.path!!.contains("/config/request/") }.method)
+        assertEquals(2, (c.get("v1/device/") as JsonArray).size)
+        val calls = requests.filter { it.path!!.startsWith("/v1/") }
+        assertTrue(calls.isNotEmpty() && calls.all { it.getHeader("Authorization")!!.startsWith("Bearer ") })
     }
 
     @Test
@@ -155,8 +140,8 @@ class BackendClientTest {
         validRefresh += "refresh-1"
 
         // Several calls at once: all get a 401, but only one refresh goes out.
-        val results = (1..5).map { async(kotlinx.coroutines.Dispatchers.IO) { DeviceConfigApi(c).devices("4711") } }.awaitAll()
-        assertTrue(results.all { it.size == 2 })
+        val results = (1..5).map { async(kotlinx.coroutines.Dispatchers.IO) { c.get("v1/device/") } }.awaitAll()
+        assertTrue(results.all { (it as JsonArray).size == 2 })
         assertEquals(1, refreshes.get())
         assertEquals("refresh-3", tokens.load()!!.refresh)
         assertEquals(jwt(3), tokens.load()!!.access)
@@ -169,7 +154,7 @@ class BackendClientTest {
         c.login("jdoe", "secret", null)
         generation.incrementAndGet()
         refreshFails = true
-        assertFailsWith<NotLoggedInException> { DeviceConfigApi(c).devices("4711") }
+        assertFailsWith<NotLoggedInException> { c.get("v1/device/") }
         assertNull(tokens.load())
         assertEquals(AuthState.LoggedOut, c.state.value)
     }
@@ -194,14 +179,6 @@ class BackendClientTest {
         assertFailsWith<NotLoggedInException> { c.get("v1/device/") }
     }
 
-    @Test
-    fun `device list in other shapes`() {
-        val wrapped = Json.parseToJsonElement("""{"success":true,"results":[{"id":3,"hash":"9-01"},{"name":"no id"}]}""")
-        assertEquals(listOf(RemoteDevice(3, "9-01", "9-01")), DeviceConfigApi.deviceList(wrapped))
-        val pending = DeviceConfigApi.parseConfig(17, Json.parseToJsonElement("""{"success":true,"config":null,"requested":{"id":812,"status":"sent"}}"""))
-        assertNull(pending.content)
-        assertEquals("sent", pending.requestStatus)
-    }
 
     @Test
     fun `old dotted profiles get the template's types`() {
@@ -210,24 +187,4 @@ class BackendClientTest {
         assertEquals("""{"device":{"version":"2026.11"},"measurement":{"interval_sec":1800},"x":{"flag":"true"}}""", config.toString())
     }
 
-    companion object {
-        private val API2_CONFIG = """
-            {
-              "success": true,
-              "device": {"id": 17, "raw_hash": "4711-01", "project_id": 4711, "model": "smartex mx"},
-              "config": {
-                "command_id": 812,
-                "path": "config/device_config.lua",
-                "content": "return {\n  wifi = { ssid = \"Site\", pwd = \"p\\\"w\" },\n  device = { model = \"smartex mx\", device_hash = \"4711-01\", project_id = \"4711\" },\n  measurement = { interval_sec = 1800 },\n}\n",
-                "fetched_at": "2026-11-09T19:40:03+00:00"
-              },
-              "params": {"pulldown_resistance": 136, "interval_sec": 1800, "poll_sec": 14400},
-              "editable": {"interval_sec": {"min": 60, "max": 86400}},
-              "requested": null,
-              "result_ttl_days": 7,
-              "pending_commands": [],
-              "last_command_poll": "2026-11-09T19:40:03+00:00"
-            }
-        """.trimIndent()
-    }
 }

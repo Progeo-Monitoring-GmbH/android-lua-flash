@@ -22,7 +22,78 @@ import kotlinx.coroutines.launch
  * States: idle, boot, syncing, writing, normal, installing, done, failed.
  */
 class DemoStateReceiver : BroadcastReceiver() {
+    private companion object {
+        const val TAG = "DemoStateReceiver"
+
+        /** The picture's luminance, decoded with the app's own scanner code. */
+        fun decodeQr(file: java.io.File): String? {
+            val bitmap = android.graphics.BitmapFactory.decodeFile(file.path) ?: return null
+            val w = bitmap.width
+            val h = bitmap.height
+            val pixels = IntArray(w * h)
+            bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+            bitmap.recycle()
+            val luma = ByteArray(w * h) { i ->
+                val p = pixels[i]
+                ((((p shr 16) and 0xFF) * 299 + ((p shr 8) and 0xFF) * 587 + (p and 0xFF) * 114) / 1000).toByte()
+            }
+            return com.progeo.core.qr.CodeDecoder(com.progeo.core.qr.CodeFormat.QR_ONLY).decode(luma, w, h)
+        }
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
+        // --es login_qr <file name in the app's cache dir>: logs in with a picture of a login QR
+        // code, exactly as if the camera had scanned it (tools/screenshots.ps1). The picture is
+        // decoded here and deleted at once, so the token is never on a command line or in a log.
+        intent.getStringExtra("login_qr")?.let { name ->
+            val file = java.io.File(context.cacheDir, name)
+            val pending = goAsync()
+            context.graph.appScope.launch {
+                try {
+                    val text = decodeQr(file)
+                    val code = text?.let { com.progeo.core.auth.LoginCode.parse(it) }
+                    if (code == null) {
+                        android.util.Log.e(TAG, "login_qr: no ProGeo login code in the picture")
+                    } else {
+                        val result = context.graph.backend.login(code)
+                        // LoginResult.Failed carries only a user message, never the token.
+                        android.util.Log.i(TAG, "login_qr: $result")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e(TAG, "login_qr failed: ${e.javaClass.simpleName}")
+                } finally {
+                    file.delete()
+                    pending.finish()
+                }
+            }
+            return
+        }
+        // --es demo_profile <name>: saves an example profile (template defaults plus a few values),
+        // standing in for a scanned config QR code, which an emulator cannot scan.
+        intent.getStringExtra("demo_profile")?.let { name ->
+            val pending = goAsync()
+            context.graph.appScope.launch {
+                try {
+                    val t = context.graph.currentTemplate()
+                    var config = t.defaults()
+                    fun put(path: String, text: String) {
+                        com.progeo.luaflasher.core.config.LuaJson.typed(text, t.field(path)?.kind ?: com.progeo.luaflasher.core.config.FieldKind.STRING)
+                            ?.let { config = com.progeo.luaflasher.core.config.LuaJson.with(config, path, it) }
+                    }
+                    put("wifi.ssid", "Site-WLAN")
+                    put("wifi.pwd", "secret123")
+                    put("device.version", "2026.11")
+                    put("device.project_id", "4711")
+                    put("device.device_hash", name)
+                    context.graph.profiles.save(com.progeo.luaflasher.data.Profile(name = name, config = config))
+                } catch (e: Exception) {
+                    android.util.Log.e(TAG, "demo_profile failed", e)
+                } finally {
+                    pending.finish()
+                }
+            }
+            return
+        }
         // --es import <file name in the app's cache dir>: developer import of an (unsigned) bundle,
         // the same as Bundles → Import bundle… (for devices where the file picker is awkward).
         intent.getStringExtra("import")?.let { name ->

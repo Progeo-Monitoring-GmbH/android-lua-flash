@@ -26,17 +26,32 @@ sealed interface LoginCode {
         override fun toString() = "RefreshToken(…)"
     }
 
+    /**
+     * The account's API token (Django REST Framework `authtoken`: 40 hex digits), as the QR
+     * code on the portal's homepage shows it. It is not exchanged: the app sends it as
+     * `Authorization: Token <key>` on every call. It does not expire and is not single use;
+     * it stays valid until it is revoked in the portal.
+     */
+    data class ApiToken(val key: String) : LoginCode {
+        override fun toString() = "ApiToken(…)"
+    }
+
     companion object {
         /** `secrets.token_urlsafe(32)` gives 43 characters; allow some room either way. */
         private val TOKEN = Regex("[A-Za-z0-9_-]{32,128}")
+
+        /** DRF `Token.generate_key()`: `binascii.hexlify(os.urandom(20))`, 40 lowercase hex digits. */
+        private val API_TOKEN = Regex("[0-9a-f]{40}")
         private val LINK_PATH = Regex("/login/link/([A-Za-z0-9_-]+)/?$")
 
         /**
          * Reads a scanned code; null if it is no ProGeo login code. Accepted:
          * - the login link of the portal, `https://<portal>/login/link/<token>`
-         * - a URL or `progeo://login` link with `?token=<login token>` or `?refresh=<jwt>`
-         * - JSON: `{"token": "<login token>"}` or `{"refresh": "<jwt>"}`
-         * - the bare login token or refresh JWT
+         * - a URL or `progeo://login` link with `?token=<login or API token>` or `?refresh=<jwt>`
+         * - JSON: `{"token": "<login or API token>"}` or `{"refresh": "<jwt>"}`
+         * - the bare login token, API token or refresh JWT
+         *
+         * A `token` of 40 hex digits is the API token (homepage QR code); any other the login token.
          *
          * The code never chooses the server: the token is only ever sent to the server the app
          * is configured for, so a code from elsewhere cannot redirect the login.
@@ -73,7 +88,11 @@ sealed interface LoginCode {
             else -> loginToken(s)
         }
 
-        private fun loginToken(token: String) = token.takeIf { TOKEN.matches(it) }?.let(::LoginToken)
+        private fun loginToken(token: String): LoginCode? = when {
+            API_TOKEN.matches(token) -> ApiToken(token)
+            TOKEN.matches(token) -> LoginToken(token)
+            else -> null
+        }
 
         /** Only refresh tokens: an access token would log in for an hour and could not be renewed. */
         private fun refresh(jwt: String): LoginCode? =

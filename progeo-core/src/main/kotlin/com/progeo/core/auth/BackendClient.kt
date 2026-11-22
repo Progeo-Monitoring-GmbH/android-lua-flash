@@ -70,13 +70,18 @@ class BackendClient(
             if (current == null || request.header(AUTHORIZATION) != null) {
                 chain.proceed(request)
             } else {
-                chain.proceed(request.newBuilder().header(AUTHORIZATION, "Bearer ${current.access}").build())
+                chain.proceed(request.newBuilder().header(AUTHORIZATION, current.authorization).build())
             }
         }
         .authenticator { _, response -> refreshAndRetry(response) }
         .build()
 
-    private fun stateOf(t: Tokens?): AuthState = if (t == null) AuthState.LoggedOut else AuthState.LoggedIn(Claims.of(t.access))
+    private fun stateOf(t: Tokens?): AuthState = when {
+        t == null -> AuthState.LoggedOut
+        // An API token carries no claims; the server still enforces every permission.
+        t.apiToken -> AuthState.LoggedIn(Claims(t.username, null, false, false, false, false, false))
+        else -> AuthState.LoggedIn(Claims.of(t.access))
+    }
 
     fun url(path: String, query: Map<String, String> = emptyMap()): HttpUrl {
         val builder = (baseUrl().toHttpUrl().resolve(path) ?: throw BackendException("Invalid server address.", path)).newBuilder()
@@ -121,6 +126,7 @@ class BackendClient(
      */
     suspend fun login(code: LoginCode, otp: String? = null): LoginResult = withContext(Dispatchers.IO) {
         val (path, body) = when (code) {
+            is LoginCode.ApiToken -> return@withContext loginWithApiToken(code.key)
             is LoginCode.LoginToken -> "api/auth-support/login-link/exchange/" to buildJsonObject {
                 put("token", code.token)
                 if (!otp.isNullOrBlank()) put("otp", otp.trim())
@@ -151,15 +157,44 @@ class BackendClient(
         }
     }
 
+    /**
+     * Logs in with the account's API token (homepage QR code): checks it against the user's
+     * profile, then keeps it as the session. Nothing is exchanged; no two-factor code is asked,
+     * the token itself is the credential.
+     */
+    private fun loginWithApiToken(key: String): LoginResult = try {
+        val request = Request.Builder().url(url("v1/user/profile/")).header(AUTHORIZATION, "Token $key").get().build()
+        plain.newCall(request).execute().use { r ->
+            val json = parse(r)
+            when (r.code) {
+                200 -> {
+                    val t = Tokens(access = key, refresh = "", apiToken = true, username = json.str("username"))
+                    tokens.save(t)
+                    _state.value = stateOf(t)
+                    LoginResult.Success
+                }
+                401 -> LoginResult.Failed("This login code is no longer valid (its token was revoked). Show the current code in the portal.")
+                403 -> LoginResult.Failed(forbidden(json).userMessage)
+                429 -> LoginResult.Failed("Too many attempts. Wait a while and try again.")
+                else -> LoginResult.Failed("Server error (HTTP ${r.code}).")
+            }
+        }
+    } catch (e: IOException) {
+        LoginResult.Failed("The ProGeo server cannot be reached. Check the network and retry.")
+    }
+
     /** The portal modules the logged-in account may use (`api/auth-support/module-permissions/`). */
     suspend fun modulePermissions(): ModulePermissions = ModulePermissions.parse(get("api/auth-support/module-permissions/"))
 
-    /** Blacklists the refresh token on the server (best effort) and forgets both tokens. */
+    /**
+     * Blacklists the refresh token on the server (best effort) and forgets both tokens.
+     * An API token is only forgotten on the phone: it stays valid until it is revoked in the portal.
+     */
     suspend fun logout() = withContext(Dispatchers.IO) {
         val current = tokens.load()
         tokens.clear()
         _state.value = AuthState.LoggedOut
-        if (current != null) {
+        if (current != null && !current.apiToken) {
             runCatching {
                 plain.newCall(post(url("api/token/logout/"), buildJsonObject { put("refresh", current.refresh) })).execute().close()
             }
@@ -219,6 +254,8 @@ class BackendClient(
         if (response.priorResponse != null) return null // already retried once: give up
         synchronized(refreshLock) {
             val current = tokens.load() ?: return null
+            // An API token cannot be refreshed: a 401 means it was revoked, and execute() logs out.
+            if (current.apiToken) return null
             val sent = response.request.header(AUTHORIZATION)?.removePrefix("Bearer ")
             if (sent != current.access) {
                 // Another request refreshed while this one waited.

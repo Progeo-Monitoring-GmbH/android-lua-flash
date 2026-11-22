@@ -78,7 +78,8 @@ fun SettingsScreen(onImpressum: () -> Unit) {
 
         Section("ProGeo account") {
             when (val a = auth) {
-                AuthState.LoggedOut -> Text("Not signed in. Only needed for the server route: Profiles → Read from controller → Fetch via the ProGeo server.", style = MaterialTheme.typography.bodySmall)
+                // Not shown in practice: the app sits behind the login (AuthGate).
+                AuthState.LoggedOut -> Text("Not signed in.", style = MaterialTheme.typography.bodySmall)
                 is AuthState.LoggedIn -> Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "Signed in as ${a.username ?: "?"}" + if (a.claims?.isDemo == true) " (demo, read-only)" else "",
@@ -120,7 +121,7 @@ fun SettingsScreen(onImpressum: () -> Unit) {
                 OutlinedTextField(
                     value = backendUrl,
                     onValueChange = { backendUrl = it },
-                    label = { Text("Backend URL (login, controller configs)") },
+                    label = { Text("Backend URL (login)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     modifier = Modifier.fillMaxWidth(),

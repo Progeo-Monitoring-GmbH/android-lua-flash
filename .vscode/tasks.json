@@ -67,6 +67,16 @@
           "pattern": { "regexp": "^w: file://(?:/(?=[A-Za-z]:))?(.+?):(\\d+):(\\d+) (.*)$", "file": 1, "line": 2, "column": 3, "message": 4 }
         }
       ]
+    },
+    {
+      "label": "Android: Screenshots",
+      "detail": "Every view on an emulator → docs/screenshots/ (asks for the ProGeo login in the terminal)",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\tools\\screenshots.ps1"],
+      // The script asks for user, password and two-factor code here: keep the terminal focused.
+      "presentation": { "reveal": "always", "focus": true, "panel": "dedicated", "clear": true },
+      "problemMatcher": []
     }
   ]
 }
