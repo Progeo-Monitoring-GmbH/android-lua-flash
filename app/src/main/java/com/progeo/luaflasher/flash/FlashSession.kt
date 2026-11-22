@@ -102,6 +102,18 @@ class FlashSession(
     val bundleId: String? get() = job?.bundleId
 
     /**
+     * Debug builds only: shows a wizard step without a board, for screenshots and UI checks
+     * (see the debug-only DemoStateReceiver). Never call this from production code.
+     */
+    fun showDemoState(state: FlashState, log: String = "") {
+        check(com.progeo.luaflasher.BuildConfig.DEBUG) { "demo states exist in debug builds only" }
+        worker?.cancel()
+        closePort()
+        _log.value = log
+        _state.value = state
+    }
+
+    /**
      * Loads and re-checks the bundle, builds the device config and opens the port.
      * Throws [FlasherException] for anything the user must fix first.
      */

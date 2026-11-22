@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilterChip
@@ -26,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.progeo.luaflasher.BuildConfig
@@ -76,7 +78,7 @@ fun SettingsScreen() {
 
         Section("ProGeo account") {
             when (val a = auth) {
-                AuthState.LoggedOut -> Text("Not signed in. Sign in under Profiles → Fetch from controller.", style = MaterialTheme.typography.bodySmall)
+                AuthState.LoggedOut -> Text("Not signed in. Only needed for the server route: Profiles → Read from controller → Fetch via the ProGeo server.", style = MaterialTheme.typography.bodySmall)
                 is AuthState.LoggedIn -> Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Signed in as ${a.username ?: "?"}", modifier = Modifier.weight(1f))
                     TextButton(onClick = { scope.launch { graph.backend.logout() } }) { Text("Log out") }
@@ -150,11 +152,15 @@ fun SettingsScreen() {
 
 @Composable
 private fun SwitchRow(title: String, detail: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    // The whole row toggles, not only the small switch.
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.toggleable(value = checked, onValueChange = onChange, role = Role.Switch),
+    ) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleSmall)
             Text(detail, style = MaterialTheme.typography.bodySmall)
         }
-        Switch(checked = checked, onCheckedChange = onChange)
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
