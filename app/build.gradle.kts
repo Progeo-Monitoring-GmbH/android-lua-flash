@@ -116,6 +116,7 @@ configurations.configureEach {
 
 dependencies {
     implementation(project(":core"))
+    implementation(project(":progeo-core"))
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.core.ktx)
@@ -133,7 +134,6 @@ dependencies {
     implementation(libs.compose.material.icons)
     implementation(libs.usb.serial)
     implementation(libs.okhttp)
-    implementation(libs.play.services.code.scanner)
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)

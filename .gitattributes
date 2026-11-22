@@ -1,0 +1,8 @@
+# Signed files must keep their exact bytes: core.autocrlf=true would check them out with
+# CRLF on Windows and break the signature check (BundleTest).
+core/src/test/resources/fixtures/** -text
+keys/** -text
+
+# Scripts run by their own shell
+gradlew text eol=lf
+*.bat text eol=crlf

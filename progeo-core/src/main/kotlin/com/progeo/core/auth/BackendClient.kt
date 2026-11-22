@@ -1,6 +1,8 @@
-package com.progeo.luaflasher.backend
+package com.progeo.core.auth
 
-import com.progeo.luaflasher.core.FlasherException
+import com.progeo.core.UserFacingException
+import com.progeo.core.json.flag
+import com.progeo.core.json.str
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -10,7 +12,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
@@ -24,7 +25,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
 
-open class BackendException(userMessage: String, detail: String? = null) : FlasherException(userMessage, detail)
+open class BackendException(userMessage: String, detail: String? = null) : UserFacingException(userMessage, detail)
 
 class NotLoggedInException : BackendException("Please log in to the ProGeo server.")
 
@@ -113,6 +114,45 @@ class BackendClient(
             LoginResult.Failed("The ProGeo server cannot be reached. Check the network and retry.")
         }
     }
+
+    /**
+     * Logs in with a scanned [LoginCode]. A login token may ask for the two-factor code
+     * ([LoginResult.OtpRequired]); it stays valid until it is used, so send it again with [otp].
+     */
+    suspend fun login(code: LoginCode, otp: String? = null): LoginResult = withContext(Dispatchers.IO) {
+        val (path, body) = when (code) {
+            is LoginCode.LoginToken -> "api/auth-support/login-link/exchange/" to buildJsonObject {
+                put("token", code.token)
+                if (!otp.isNullOrBlank()) put("otp", otp.trim())
+            }
+            is LoginCode.RefreshToken -> "api/token/refresh/" to buildJsonObject { put("refresh", code.token) }
+        }
+        try {
+            plain.newCall(post(url(path), body)).execute().use { r ->
+                val json = parse(r)
+                when {
+                    r.code == 200 -> {
+                        val t = tokensFrom(json) ?: return@use LoginResult.Failed("Unexpected answer from the server.")
+                        tokens.save(t)
+                        _state.value = stateOf(t)
+                        LoginResult.Success
+                    }
+                    json.str("reason") == "otp_required" -> LoginResult.OtpRequired
+                    json.str("reason") == "otp_invalid" -> LoginResult.OtpInvalid
+                    r.code == 429 -> LoginResult.Failed("Too many attempts. Wait a while and try again.")
+                    r.code == 400 || r.code == 401 -> LoginResult.Failed(
+                        "This login code is invalid, expired or was already used. Create a new one in the portal.",
+                    )
+                    else -> LoginResult.Failed("Server error (HTTP ${r.code}).")
+                }
+            }
+        } catch (e: IOException) {
+            LoginResult.Failed("The ProGeo server cannot be reached. Check the network and retry.")
+        }
+    }
+
+    /** The portal modules the logged-in account may use (`api/auth-support/module-permissions/`). */
+    suspend fun modulePermissions(): ModulePermissions = ModulePermissions.parse(get("api/auth-support/module-permissions/"))
 
     /** Blacklists the refresh token on the server (best effort) and forgets both tokens. */
     suspend fun logout() = withContext(Dispatchers.IO) {
@@ -216,9 +256,3 @@ class BackendClient(
         private val JSON_TYPE = "application/json".toMediaType()
     }
 }
-
-internal fun JsonElement?.str(name: String): String? =
-    ((this as? JsonObject)?.get(name) as? JsonPrimitive)?.takeIf { it.isString || it.content != "null" }?.content
-
-internal fun JsonElement?.flag(name: String): Boolean =
-    ((this as? JsonObject)?.get(name) as? JsonPrimitive)?.booleanOrNull ?: false

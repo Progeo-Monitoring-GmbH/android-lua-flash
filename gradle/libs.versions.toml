@@ -14,7 +14,8 @@ datastore = "1.1.7"
 usbSerial = "3.8.1"
 okhttp = "4.12.0"
 junit = "4.13.2"
-codeScanner = "16.1.0"
+camerax = "1.4.2"
+zxing = "3.5.3"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -41,11 +42,15 @@ usb-serial = { module = "com.github.mik3y:usb-serial-for-android", version.ref =
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.ref = "okhttp" }
 junit = { module = "junit:junit", version.ref = "junit" }
-play-services-code-scanner = { module = "com.google.android.gms:play-services-code-scanner", version.ref = "codeScanner" }
+androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camerax" }
+androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "camerax" }
+androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "camerax" }
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

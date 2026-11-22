@@ -164,6 +164,14 @@ object ConfigValidator {
         effective("measurement.interval_sec")?.toDoubleOrNull()?.let {
             if (it < 60) issues += ConfigIssue("measurement.interval_sec", Severity.ERROR, "must be at least 60 seconds")
         }
+        // Configs from older boards may hold other values; they still flash, but get flagged.
+        for (path in ConfigChoices.paths) {
+            val value = values[path]?.takeIf { it.isNotEmpty() } ?: continue
+            if (LuaJson.isNumber(value) && ConfigChoices.find(path, value) == null) {
+                val allowed = ConfigChoices.of(path)!!.joinToString(", ") { it.label }
+                issues += ConfigIssue(path, Severity.WARNING, "$value is not one of the supported values ($allowed)")
+            }
+        }
         val portalPwd = effective("portal.pwd").orEmpty()
         if (portalPwd.isNotEmpty() && portalPwd.length < 8) {
             issues += ConfigIssue("portal.pwd", Severity.ERROR, "must be empty or at least 8 characters")

@@ -41,8 +41,8 @@ import com.progeo.luaflasher.core.bundle.BundleFormat
 import com.progeo.luaflasher.data.AppSettings
 import com.progeo.luaflasher.flash.FlashState
 import com.progeo.luaflasher.graph
-import com.progeo.luaflasher.ui.MessageCard
-import com.progeo.luaflasher.ui.theme.StatusColors
+import com.progeo.core.ui.MessageCard
+import com.progeo.core.ui.theme.StatusColors
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date

@@ -31,14 +31,14 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.progeo.luaflasher.BuildConfig
-import com.progeo.luaflasher.backend.AuthState
+import com.progeo.core.auth.AuthState
 import com.progeo.luaflasher.data.AppSettings
 import com.progeo.luaflasher.graph
-import com.progeo.luaflasher.ui.Section
+import com.progeo.core.ui.Section
 import kotlinx.coroutines.launch
 
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(onImpressum: () -> Unit) {
     val graph = LocalContext.current.graph
     val scope = rememberCoroutineScope()
     val settings by graph.settings.settings.collectAsState(AppSettings())
@@ -80,7 +80,10 @@ fun SettingsScreen() {
             when (val a = auth) {
                 AuthState.LoggedOut -> Text("Not signed in. Only needed for the server route: Profiles → Read from controller → Fetch via the ProGeo server.", style = MaterialTheme.typography.bodySmall)
                 is AuthState.LoggedIn -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Signed in as ${a.username ?: "?"}", modifier = Modifier.weight(1f))
+                    Text(
+                        "Signed in as ${a.username ?: "?"}" + if (a.claims?.isDemo == true) " (demo, read-only)" else "",
+                        modifier = Modifier.weight(1f),
+                    )
                     TextButton(onClick = { scope.launch { graph.backend.logout() } }) { Text("Log out") }
                 }
             }
@@ -146,6 +149,7 @@ fun SettingsScreen() {
         Section("About") {
             Text("LUA Flasher ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
             Text("Signing keys: ${graph.publicKeys.keys.keys.joinToString()}", style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = onImpressum) { Text("Impressum & open-source licenses") }
         }
     }
 }
