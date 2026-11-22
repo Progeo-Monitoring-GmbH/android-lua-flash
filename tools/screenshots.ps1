@@ -386,6 +386,14 @@ View "Profile editor" {
     Tap '^demo-01$'
     Start-Sleep 2
     Shot "05-profile-editor-values"
+    # Swipe to the next section card; the card area takes that card's height.
+    $card = Find-Node '^Edit '
+    if ($card) {
+        $null, $y = Center $card
+        Adb shell input swipe ([int]($W * 0.8)) $y ([int]($W * 0.15)) $y 300
+        Start-Sleep 1
+        Shot "05b-profile-editor-next-card"
+    }
     Tap '^Lua$'; Shot "06-profile-editor-lua"
     Tap '^JSON$'; Shot "07-profile-editor-json"
     Back
@@ -405,12 +413,20 @@ View "Flash setup" {
     Tap '^Flash$'
     Start-Sleep 2
     Shot "10-flash-setup"
-    if (ScrollTo '^Expert$') {
-        Tap '^Expert$'
-        if (ScrollTo 'Write my own text') { Tap 'Write my own text' }
-        ScrollTop
-        Shot "10b-flash-setup-expert"
+    # Device config: one card per section; the pencil opens the section's dialog.
+    if (ScrollTo '^Edit ') {
+        Tap '^Edit '
+        Start-Sleep 1
+        Shot "10b-flash-setup-edit" -Viewport
+        Tap '^Cancel$'
     }
+    if (ScrollTo '^Add router$') {
+        Tap '^Add router$'
+        Start-Sleep 1
+        Shot "10c-flash-setup-router" -Viewport
+        Tap '^Cancel$'
+    }
+    ScrollTop
 }
 
 View "Flash wizard" {

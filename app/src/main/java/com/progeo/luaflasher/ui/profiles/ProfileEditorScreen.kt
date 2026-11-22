@@ -17,8 +17,6 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -41,7 +39,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -54,8 +51,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
@@ -64,23 +59,18 @@ import com.progeo.core.qr.CodeScanDialog
 import com.progeo.core.ui.MessageCard
 import com.progeo.core.ui.copyToClipboard
 import com.progeo.luaflasher.AppGraph
-import com.progeo.luaflasher.core.config.Choice
-import com.progeo.luaflasher.core.config.ConfigChoices
 import com.progeo.luaflasher.core.config.ConfigCode
-import com.progeo.luaflasher.core.config.ConfigIssue
 import com.progeo.luaflasher.core.config.ConfigTemplate
 import com.progeo.luaflasher.core.config.ConfigValidator
 import com.progeo.luaflasher.core.config.DeviceConfigBuilder
-import com.progeo.luaflasher.core.config.FieldKind
 import com.progeo.luaflasher.core.config.LuaJson
-import com.progeo.luaflasher.core.config.LuaValue
 import com.progeo.luaflasher.core.config.Severity
 import com.progeo.luaflasher.data.Profile
+import com.progeo.luaflasher.ui.config.ConfigSectionCards
+import com.progeo.luaflasher.ui.config.sectionsOf
 import com.progeo.luaflasher.graph
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.util.UUID
@@ -97,10 +87,6 @@ class ProfileEditorViewModel : ViewModel() {
     var boardReadAt: String? = null
     var profileId: String? = null
     var saving by mutableStateOf(false)
-
-    /** What the user typed, per path; kept while it is not a valid value yet (e.g. "18." or "abc" for a number). */
-    val drafts = mutableStateMapOf<String, String>()
-    val invalid = mutableStateMapOf<String, String>()
 
     /** The JSON tab's text while it differs from [config] (being edited); null shows [config]. */
     var jsonText by mutableStateOf<String?>(null)
@@ -125,30 +111,9 @@ class ProfileEditorViewModel : ViewModel() {
         loaded = true
     }
 
-    fun setText(path: String, kind: FieldKind, text: String) {
-        drafts[path] = text
-        if (text.isEmpty()) {
-            invalid.remove(path)
-            config = LuaJson.with(config, path, null)
-            return
-        }
-        val value = LuaJson.typed(text, kind)
-        if (value == null) {
-            invalid[path] = if (kind == FieldKind.NUMBER) "must be a number" else "must be true or false"
-        } else {
-            invalid.remove(path)
-            config = LuaJson.with(config, path, value)
-        }
-    }
-
-    fun setBoolean(path: String, value: Boolean) {
-        config = LuaJson.with(config, path, JsonPrimitive(value))
-    }
-
-    fun setChoice(path: String, choice: Choice) {
-        drafts.remove(path)
-        invalid.remove(path)
-        config = LuaJson.with(config, path, JsonPrimitive(choice.value))
+    /** A section was saved in its dialog on the Values tab (null removes it). */
+    fun setSection(name: String, values: JsonObject?) {
+        replaceConfig(LuaJson.with(config, name, values))
     }
 
     fun jsonShown(): String = jsonText ?: prettyJson.encodeToString(JsonObject.serializer(), config)
@@ -206,11 +171,9 @@ class ProfileEditorViewModel : ViewModel() {
         }
     }
 
-    /** A whole new config: every unfinished edit (field drafts, broken JSON text) is dropped. */
+    /** A whole new config: unfinished JSON text is dropped. */
     private fun replaceConfig(newConfig: JsonObject) {
         config = newConfig
-        drafts.clear()
-        invalid.clear()
         jsonText = null
         jsonError = null
     }
@@ -242,7 +205,7 @@ fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Un
 
     val built = template?.let { runCatching { DeviceConfigBuilder.build(it, vm.config) }.getOrNull() }
     val issues = if (template != null && built != null) ConfigValidator.validate(template, built) else emptyList()
-    val canSave = vm.loaded && !vm.saving && (!isNew || vm.hasScan) && vm.invalid.isEmpty() && vm.jsonError == null &&
+    val canSave = vm.loaded && !vm.saving && (!isNew || vm.hasScan) && vm.jsonError == null &&
         issues.none { it.severity == Severity.ERROR && it.path != DeviceConfigBuilder.DEVICE_HASH }
 
     fun save(then: (Profile) -> Unit) {
@@ -308,10 +271,18 @@ fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Un
                             Text("Read from the board over USB, ${it.replace('T', ' ')}", style = MaterialTheme.typography.bodySmall)
                         }
                         Text(
-                            "Every value of device_config.lua. Empty fields are left out; when flashing, the bundle's template fills in its defaults.",
+                            "Swipe through the sections of device_config.lua; the pencil edits one. Empty values are left out; when flashing, the bundle's template fills in its defaults.",
                             style = MaterialTheme.typography.bodySmall,
                         )
-                        if (template != null) ObjectEditor(vm, "", vm.config, template.root, issues, depth = 0)
+                        if (template != null) {
+                            ConfigSectionCards(
+                                template = template,
+                                config = vm.config,
+                                issues = issues,
+                                onSetSection = vm::setSection,
+                                sections = sectionsOf(template, vm.config),
+                            )
+                        }
                     }
                     1 -> {
                         val lua = vm.lua()
@@ -327,14 +298,14 @@ fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Un
                     }
                 }
 
-                issues.filter { it.path !in vm.invalid }.forEach {
+                // The Values tab shows the problems on the cards.
+                if (tab != 0) issues.forEach {
                     Text(
                         "${if (it.severity == Severity.ERROR) "⚠" else "ⓘ"} ${it.path}: ${it.message}",
                         color = if (it.severity == Severity.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                if (vm.invalid.isNotEmpty()) MessageCard("Fix the marked fields before saving.")
             }
 
             Column(
@@ -405,188 +376,6 @@ private fun CodeField(text: String, onChange: (String) -> Unit, error: String?) 
             autoCorrectEnabled = false,
             keyboardType = KeyboardType.Text,
         ),
-        modifier = Modifier.fillMaxWidth(),
-    )
-}
-
-/**
- * The fields of one table: everything the profile has, plus what the template knows but the
- * profile does not set yet ("not set", with the template's default or example as hint).
- */
-@Composable
-private fun ObjectEditor(
-    vm: ProfileEditorViewModel,
-    prefix: String,
-    obj: JsonObject?,
-    templateTable: LuaValue.Table?,
-    issues: List<ConfigIssue>,
-    depth: Int,
-) {
-    val names = LinkedHashSet<String>()
-    templateTable?.fields?.forEach { f ->
-        if (!(depth == 0 && f.name in ConfigTemplate.SKIPPED_TABLES && obj?.containsKey(f.name) != true) && !f.positional) names += f.name
-    }
-    obj?.keys?.let(names::addAll)
-
-    for (name in names) {
-        val path = if (prefix.isEmpty()) name else "$prefix.$name"
-        val value: JsonElement? = obj?.get(name)
-        val templateField = templateTable?.fields?.firstOrNull { it.name == name && !it.commented } ?: templateTable?.fields?.firstOrNull { it.name == name }
-        val templateValue = templateField?.value
-        when {
-            value is JsonObject || (value == null && templateValue is LuaValue.Table && templateValue.fields.none { it.positional }) -> {
-                SectionTitle(path, depth)
-                ObjectEditor(vm, path, value as? JsonObject, templateValue as? LuaValue.Table, issues, depth + 1)
-            }
-            value is JsonArray -> {
-                SectionTitle("$path (list)", depth)
-                value.forEachIndexed { i, item ->
-                    val itemPath = "$path.${i + 1}"
-                    if (item is JsonObject) {
-                        SectionTitle(itemPath, depth + 1)
-                        ObjectEditor(vm, itemPath, item, null, issues, depth + 2)
-                    } else if (item is JsonPrimitive) {
-                        Leaf(vm, itemPath, "${i + 1}", item, LuaJson.kindOf(item), null, null, issues)
-                    }
-                }
-            }
-            else -> {
-                val primitive = value as? JsonPrimitive
-                val field = vm.template?.field(path)
-                val choices = ConfigChoices.of(path)
-                if (choices != null && (primitive == null || LuaJson.kindOf(primitive) != FieldKind.BOOLEAN)) {
-                    ChoiceLeaf(vm, path, name, primitive, choices, field?.default, field?.description, issues)
-                } else {
-                    val kind = primitive?.let(LuaJson::kindOf) ?: field?.kind ?: FieldKind.STRING
-                    val hint = field?.default?.let { "default: $it" } ?: field?.hint?.let { "e.g. $it" }
-                    Leaf(vm, path, name, primitive, kind, hint, field?.description, issues)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SectionTitle(text: String, depth: Int) {
-    Text(
-        text,
-        style = if (depth == 0) MaterialTheme.typography.titleSmall else MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(top = if (depth == 0) 8.dp else 0.dp),
-    )
-}
-
-/** A setting that only takes a fixed set of values ([ConfigChoices]). */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ChoiceLeaf(
-    vm: ProfileEditorViewModel,
-    path: String,
-    label: String,
-    value: JsonPrimitive?,
-    choices: List<Choice>,
-    default: String?,
-    description: String?,
-    issues: List<ConfigIssue>,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val current = ConfigChoices.find(path, value?.content)
-    val unsupported = value != null && current == null
-    val shown = when {
-        current != null -> current.label
-        value != null -> "${value.content} (not supported)"
-        else -> ""
-    }
-    val defaultLabel = default?.let { ConfigChoices.find(path, it)?.label ?: it }
-    val support = listOfNotNull(
-        if (unsupported) "pick one of the supported values" else null,
-        description,
-        if (value == null) "not set" + (defaultLabel?.let { ", default: $it" } ?: "") else null,
-    ).joinToString(" · ")
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        OutlinedTextField(
-            value = shown,
-            onValueChange = {},
-            readOnly = true,
-            singleLine = true,
-            label = { Text(label) },
-            supportingText = if (support.isNotEmpty()) ({ Text(support) }) else null,
-            isError = unsupported || issues.any { it.path == path && it.severity == Severity.ERROR },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier
-                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
-                .fillMaxWidth(),
-        )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            choices.forEach { choice ->
-                DropdownMenuItem(
-                    text = { Text(choice.label) },
-                    onClick = {
-                        vm.setChoice(path, choice)
-                        expanded = false
-                    },
-                    contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding,
-                )
-            }
-        }
-    }
-}
-
-private val SECRET_NAMES = setOf("pwd", "password", "pass", "token", "secret", "key", "psk")
-
-@Composable
-private fun Leaf(
-    vm: ProfileEditorViewModel,
-    path: String,
-    label: String,
-    value: JsonPrimitive?,
-    kind: FieldKind,
-    hint: String?,
-    description: String?,
-    issues: List<ConfigIssue>,
-) {
-    if (kind == FieldKind.BOOLEAN) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.weight(1f)) {
-                Text(label)
-                Text(
-                    listOfNotNull(value?.content ?: "not set", description).joinToString(" · "),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            // "not set" is a value of its own (e.g. control.rpi: unset = autodetect).
-            if (value != null) TextButton(onClick = { vm.setText(path, kind, "") }) { Text("Unset") }
-            Switch(checked = value?.content == "true", onCheckedChange = { vm.setBoolean(path, it) })
-        }
-        return
-    }
-    val secret = label.lowercase() in SECRET_NAMES
-    var visible by remember { mutableStateOf(false) }
-    val error = vm.invalid[path] ?: issues.firstOrNull { it.path == path && it.severity == Severity.ERROR }?.message
-    val support = listOfNotNull(error, description, if (value == null) "not set" else null).joinToString(" · ")
-    OutlinedTextField(
-        value = vm.drafts[path] ?: value?.content.orEmpty(),
-        onValueChange = { vm.setText(path, kind, it) },
-        label = { Text(label) },
-        placeholder = hint?.let { { Text(it) } },
-        supportingText = if (support.isNotEmpty()) ({ Text(support) }) else null,
-        isError = error != null,
-        singleLine = true,
-        visualTransformation = if (secret && !visible) PasswordVisualTransformation() else VisualTransformation.None,
-        keyboardOptions = KeyboardOptions(
-            keyboardType = when {
-                secret -> KeyboardType.Password
-                kind == FieldKind.NUMBER -> KeyboardType.Decimal
-                label.contains("url") -> KeyboardType.Uri
-                else -> KeyboardType.Text
-            },
-            autoCorrectEnabled = false,
-        ),
-        trailingIcon = if (secret) ({
-            IconButton(onClick = { visible = !visible }) {
-                Icon(if (visible) Icons.Default.VisibilityOff else Icons.Default.Visibility, contentDescription = "Show")
-            }
-        }) else null,
         modifier = Modifier.fillMaxWidth(),
     )
 }

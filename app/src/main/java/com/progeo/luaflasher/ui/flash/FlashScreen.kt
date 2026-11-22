@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -40,10 +39,7 @@ import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -65,6 +61,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.progeo.core.qr.CodeFormat
 import com.progeo.core.qr.CodeScanDialog
 import com.progeo.luaflasher.core.FlasherException
+import com.progeo.luaflasher.core.config.DeviceConfigBuilder
 import com.progeo.luaflasher.core.config.Severity
 import com.progeo.luaflasher.core.nodemcu.InstallMode
 import com.progeo.luaflasher.core.nodemcu.InstallStep
@@ -73,6 +70,7 @@ import com.progeo.luaflasher.flash.FlashState
 import com.progeo.luaflasher.graph
 import com.progeo.core.ui.MessageCard
 import com.progeo.core.ui.Section
+import com.progeo.luaflasher.ui.config.ConfigSectionCards
 import com.progeo.luaflasher.ui.shareText
 import com.progeo.core.ui.theme.StatusColors
 import kotlinx.coroutines.launch
@@ -217,38 +215,20 @@ private fun SetupContent(vm: FlashSetupViewModel) {
         }
 
         Section("Device config") {
-            var tab by remember { mutableStateOf(if (vm.expertEdit) 1 else 0) }
-            TabRow(selectedTabIndex = tab) {
-                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Preview") })
-                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Expert") })
-            }
-            val generated = vm.generatedLua(graph)
-            if (tab == 0) {
-                issues.forEach { Text("${if (it.severity == Severity.ERROR) "⚠" else "ⓘ"} ${it.path}: ${it.message}", color = if (it.severity == Severity.ERROR) MaterialTheme.colorScheme.error else StatusColors.warn) }
-                Card(Modifier.fillMaxWidth()) {
-                    Text(
-                        if (vm.expertEdit) vm.configText else generated,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(12.dp),
-                    )
-                }
+            val template = vm.template
+            val config = vm.config(graph)
+            if (template == null || config == null) {
+                Text("Loading the bundle's config template…", style = MaterialTheme.typography.bodySmall)
             } else {
-                CheckRow(vm.expertEdit, { on ->
-                    vm.expertEdit = on
-                    if (on && vm.configText.isEmpty()) vm.configText = generated
-                }, "Write my own text instead of the generated config")
-                if (vm.expertEdit) {
-                    OutlinedTextField(
-                        value = vm.configText,
-                        onValueChange = { vm.configText = it },
-                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 240.dp),
-                    )
-                    TextButton(onClick = { vm.configText = generated }) { Text("Reset to generated") }
-                }
+                // Changes apply to this flash only; the stored profile stays as it is.
+                ConfigSectionCards(
+                    template = template,
+                    config = config,
+                    issues = issues,
+                    onSetSection = vm::setSection,
+                    hiddenPaths = setOf(DeviceConfigBuilder.DEVICE_HASH),
+                    hiddenNote = "The device hash is set above.",
+                )
             }
         }
 
@@ -275,7 +255,7 @@ private fun SetupContent(vm: FlashSetupViewModel) {
                 }
             },
             enabled = !vm.starting && vm.bundleId != null && vm.template != null &&
-                (vm.expertEdit || errors.isEmpty()) && vm.deviceHash.isNotBlank(),
+                errors.isEmpty() && vm.deviceHash.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Start") }
     }
