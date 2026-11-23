@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Terminal
@@ -34,12 +35,16 @@ import com.progeo.luaflasher.ui.monitor.MonitorScreen
 import com.progeo.luaflasher.ui.profiles.ProfileEditorScreen
 import com.progeo.luaflasher.ui.profiles.ProfilesScreen
 import com.progeo.luaflasher.ui.profiles.ReadFromControllerScreen
+import com.progeo.luaflasher.ui.routers.AntennaScreen
+import com.progeo.luaflasher.ui.routers.RouterScreen
+import com.progeo.luaflasher.ui.routers.RoutersScreen
 import com.progeo.luaflasher.ui.settings.SettingsScreen
 
 private enum class Tab(val route: String, val label: String, val icon: ImageVector) {
     HOME("home", "Home", Icons.Default.Home),
     BUNDLES("bundles", "Bundles", Icons.Default.Inventory2),
     PROFILES("profiles", "Profiles", Icons.Default.Badge),
+    ROUTERS("routers", "Routers", Icons.Default.Router),
     MONITOR("monitor", "Monitor", Icons.Default.Terminal),
     SETTINGS("settings", "Settings", Icons.Default.Settings),
 }
@@ -105,6 +110,9 @@ fun AppNavigation() {
                     onSaved = { id -> nav.navigate("profile/$id") { popUpTo(Tab.PROFILES.route) } },
                 )
             }
+            composable(Tab.ROUTERS.route) { RoutersScreen(onOpen = { nav.navigate("router") { launchSingleTop = true } }) }
+            composable("router") { RouterScreen(onBack = { nav.popBackStack() }, onAntenna = { nav.navigate("router/antenna") }) }
+            composable("router/antenna") { AntennaScreen(onBack = { nav.popBackStack() }) }
             composable(Tab.MONITOR.route) { MonitorScreen() }
             composable(Tab.SETTINGS.route) { SettingsScreen(onImpressum = { nav.navigate("impressum") }) }
             composable("impressum") {

@@ -14,7 +14,7 @@ android {
 
     defaultConfig {
         applicationId = "com.progeo.luaflasher"
-        minSdk = 26
+        minSdk = 29
         targetSdk = 36
         // Compared with min_app_version of the channel file.
         versionCode = 1
@@ -117,6 +117,7 @@ configurations.configureEach {
 dependencies {
     implementation(project(":core"))
     implementation(project(":progeo-core"))
+    implementation(project(":teltonika"))
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.core.ktx)

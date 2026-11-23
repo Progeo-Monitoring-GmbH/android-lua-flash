@@ -18,4 +18,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "lua-flasher"
-include(":core", ":progeo-core", ":app")
+include(":core", ":progeo-core", ":teltonika", ":app")

@@ -5,6 +5,10 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Routers: join the router's Wi-Fi (WifiNetworkSpecifier) and bind its API calls to that network. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -37,6 +41,12 @@
 
         <service
             android:name=".flash.FlashService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
+        <!-- Keeps a router session (firmware upload, reboot wait) alive in the background. -->
+        <service
+            android:name=".router.RouterService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
 

@@ -18,6 +18,11 @@ import com.progeo.luaflasher.data.SyncRepository
 import com.progeo.luaflasher.data.SyncWorker
 import com.progeo.luaflasher.flash.BoardConfigReader
 import com.progeo.luaflasher.flash.FlashSession
+import com.progeo.luaflasher.router.RouterBackend
+import com.progeo.luaflasher.router.RouterController
+import com.progeo.luaflasher.router.RouterFirmwareStore
+import com.progeo.luaflasher.router.RouterStore
+import com.progeo.luaflasher.router.RouterSync
 import com.progeo.luaflasher.usb.UsbSerialManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -65,6 +70,25 @@ class AppGraph(context: Context) {
         base = http,
     )
 
+    // Routers (DRAFT.md): records and outbox encrypted on the phone, firmware from the release server.
+    private val routerCipher = SecretCipher("router-secrets")
+    val routerStore = RouterStore(File(context.noBackupFilesDir, "routers.bin"), routerCipher)
+    val routerSync = RouterSync(routerStore, RouterBackend(backend))
+    val router = RouterController(
+        context = context,
+        scope = appScope,
+        store = routerStore,
+        sync = routerSync,
+        backend = RouterBackend(backend),
+        firmware = RouterFirmwareStore(http, verifier, File(context.filesDir, "router-firmware")),
+        settings = settings,
+        profiles = profiles,
+        http = http,
+        templateCache = File(context.noBackupFilesDir, "router-templates.bin"),
+        cipher = routerCipher,
+        backupDir = File(context.noBackupFilesDir, "router-backups"),
+    )
+
     init {
         appScope.launch { settings.settings.collect { backendUrl = it.backendUrl } }
     }
@@ -86,6 +110,8 @@ class LuaFlasherApp : Application() {
         graph = AppGraph(this)
         graph.appScope.launch {
             graph.profiles.load()
+            graph.routerStore.load()
+            graph.router.firmware.loadCached()
             graph.sync.loadCached()
             // Sync on app start; offline this just fails quietly and the cache stays in use.
             graph.sync.sync()

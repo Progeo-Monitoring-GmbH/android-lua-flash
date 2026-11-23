@@ -2,6 +2,8 @@
 
 Android app (Kotlin, Jetpack Compose) that installs the LUA_WLAN firmware on smartex microBOX boards
 (ESP8266 + NodeMCU) over USB-OTG. Contract: [PLAN.md](PLAN.md). Work plan and status: [STEPS.md](STEPS.md).
+It also sets up Teltonika routers (RUT241, RUT986, RUT901) over their web API; concept and status: [DRAFT.md](DRAFT.md).
+Needs Android 10 or newer.
 
 ## Build
 
@@ -36,6 +38,8 @@ Optional test inputs:
 - `progeo-core/`: Android library shared with the ProGeo spin-off apps: corporate design, login
   (password or QR login code), token storage, permissions, QR scanner, Impressum. See its [README](progeo-core/README.md).
 - `app/`: Android: USB serial, sync with `https://api.progeo.com/firmware/`, bundle store, profiles,
-  flash wizard, serial monitor.
+  flash wizard, serial monitor, routers (Wi-Fi binding, session, setup steps, antenna mode).
+- `teltonika/`: plain Kotlin, no Android: router label codes, RutOS API client, certificate pinning,
+  firmware checks, configuration templates. Tested against a simulated router (`FakeRutos`).
 - `keys/`: public firmware signing keys.
 - `scripts/`: copies of the PC scripts from the LUA_WLAN repo, for reference only.

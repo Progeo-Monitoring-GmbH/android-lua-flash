@@ -29,6 +29,9 @@ open class BackendException(userMessage: String, detail: String? = null) : UserF
 
 class NotLoggedInException : BackendException("Please log in to the ProGeo server.")
 
+/** The server has no such object (HTTP 404), e.g. an unknown device. */
+class BackendNotFoundException(detail: String?) : BackendException("Not found on the ProGeo server.", detail)
+
 class BackendUnreachableException(detail: String?) :
     BackendException("The ProGeo server cannot be reached. Check the network and retry.", detail)
 
@@ -227,6 +230,7 @@ class BackendClient(
                         throw NotLoggedInException()
                     }
                     r.code == 403 -> throw forbidden(json)
+                    r.code == 404 -> throw BackendNotFoundException(request.url.encodedPath)
                     r.code == 400 -> throw BackendException(json.str("reason") ?: "The server rejected the request.", json?.toString())
                     else -> throw BackendException("Server error (HTTP ${r.code}).", json?.toString())
                 }

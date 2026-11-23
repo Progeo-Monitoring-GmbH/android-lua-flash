@@ -17,7 +17,9 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         val graph = applicationContext.graph
         // Never compete with a running flash for CPU or storage.
         if (graph.flash.isActive) return Result.retry()
-        return if (graph.sync.sync().isSuccess) Result.success() else Result.retry()
+        // Routers: send what waited for the network (passwords, backups, reports).
+        val routersSent = graph.routerSync.flush()
+        return if (graph.sync.sync().isSuccess && routersSent) Result.success() else Result.retry()
     }
 
     companion object {
