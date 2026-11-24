@@ -116,7 +116,7 @@ configurations.configureEach {
 
 dependencies {
     implementation(project(":core"))
-    implementation(project(":progeo-core"))
+    implementation(libs.progeo.core)
     implementation(project(":teltonika"))
 
     implementation(libs.kotlinx.coroutines.android)

@@ -7,12 +7,16 @@ Needs Android 10 or newer.
 
 ## Build
 
-Requirements: JDK 17+ (Android Studio's JBR works), Android SDK with platform 36.
+Requirements: JDK 17+ (Android Studio's JBR works), Android SDK with platform 36, and read access to the
+shared library `com.progeo:progeo-core` from [progeo-android-core](https://github.com/Progeo-Monitoring-GmbH/progeo-android-core)
+(GitHub Packages): a GitHub token with `read:packages` as `gpr.user` / `gpr.key` in `~/.gradle/gradle.properties`.
+To work on the library at the same time, check it out next to this repository and add
+`progeo.core.dir=../progeo-android-core` to `local.properties`: the app then builds against that checkout.
 
 ```sh
 ./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
 ./gradlew installDebug         # onto a phone connected with USB debugging
-./gradlew test                 # JVM tests of :core, :progeo-core and :app
+./gradlew test                 # JVM tests of :core, :teltonika and :app
 ```
 
 In VS Code: **Ctrl+Shift+B** runs *Android: Run on device* (install on the phone connected via adb,
@@ -35,8 +39,8 @@ Optional test inputs:
 
 - `core/`: plain Kotlin, no Android: ROM bootloader (SLIP, sync, flash), NodeMCU console and upload,
   install sequence, bundle/signature validation, device config generation. Tested against simulated boards.
-- `progeo-core/`: Android library shared with the ProGeo spin-off apps: corporate design, login
-  (password or QR login code), token storage, permissions, QR scanner, Impressum. See its [README](progeo-core/README.md).
+- The shared library (design, login, token storage, permissions, QR scanner, Impressum) lives in its own
+  repository, [progeo-android-core](https://github.com/Progeo-Monitoring-GmbH/progeo-android-core); version in `gradle/libs.versions.toml`.
 - `app/`: Android: USB serial, sync with `https://api.progeo.com/firmware/`, bundle store, profiles,
   flash wizard, serial monitor, routers (Wi-Fi binding, session, setup steps, antenna mode).
 - `teltonika/`: plain Kotlin, no Android: router label codes, RutOS API client, certificate pinning,
