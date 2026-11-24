@@ -3,6 +3,7 @@ package com.progeo.luaflasher.backend
 import com.progeo.core.auth.AuthState
 import com.progeo.core.auth.BackendClient
 import com.progeo.core.auth.BackendException
+import com.progeo.core.auth.FailReason
 import com.progeo.core.auth.InMemoryTokenStore
 import com.progeo.core.auth.LoginResult
 import com.progeo.core.auth.NotLoggedInException
@@ -111,7 +112,7 @@ class BackendClientTest {
     fun `login with two-factor code`() = runBlocking<Unit> {
         otpEnabled = true
         val c = client()
-        assertEquals(LoginResult.Failed("Login failed. Check user name and password, or try again in 15 minutes."), c.login("jdoe", "wrong", null))
+        assertEquals(LoginResult.Failed("Login failed. Check user name and password, or try again in 15 minutes.", FailReason.BAD_CREDENTIALS), c.login("jdoe", "wrong", null))
         assertEquals(LoginResult.OtpRequired, c.login("jdoe", "secret", null))
         assertEquals(LoginResult.OtpInvalid, c.login("jdoe", "secret", "000000"))
         assertEquals(LoginResult.Success, c.login("jdoe", "secret", "123456"))
