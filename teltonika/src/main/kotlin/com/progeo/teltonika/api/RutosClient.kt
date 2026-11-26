@@ -100,6 +100,9 @@ class RutosClient(
     /** The user of the current session. */
     val username: String? get() = credentials?.username
 
+    /** The password of the current session (the router asks for it when it is changed). */
+    val password: String? get() = credentials?.password
+
     /** Logs in and keeps [credentials] for later re-logins. Throws [RouterLoginException] if rejected. */
     suspend fun login(credentials: Credentials) = loginLock.withLock {
         session = createSession(credentials)

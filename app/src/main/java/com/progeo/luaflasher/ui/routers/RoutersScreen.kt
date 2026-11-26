@@ -46,6 +46,8 @@ import com.progeo.core.ui.MessageCard
 import com.progeo.core.ui.theme.StatusColors
 import com.progeo.luaflasher.graph
 import com.progeo.luaflasher.router.Phase
+import com.progeo.luaflasher.router.RouterRecord
+import com.progeo.luaflasher.ui.SwipeToDelete
 import com.progeo.luaflasher.router.Via
 import com.progeo.luaflasher.router.firmwareShort
 import com.progeo.teltonika.label.RouterLabels
@@ -64,6 +66,7 @@ fun RoutersScreen(onOpen: () -> Unit) {
     var scanning by remember { mutableStateOf(false) }
     var typing by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
+    var confirmForget by remember { mutableStateOf<RouterRecord?>(null) }
 
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -148,8 +151,13 @@ fun RoutersScreen(onOpen: () -> Unit) {
             }
         }
         scanError?.let { item { MessageCard(it) } }
-        if (routers.isEmpty()) item { Text("No routers on this phone yet.") }
+        if (routers.isEmpty()) {
+            item { Text("No routers on this phone yet.") }
+        } else {
+            item { Text("Swipe a router sideways to remove it from this phone.", style = MaterialTheme.typography.bodySmall) }
+        }
         items(routers, key = { it.serial }) { r ->
+            SwipeToDelete(onDelete = { confirmForget = r }) {
             Card(
                 Modifier
                     .fillMaxWidth()
@@ -176,7 +184,45 @@ fun RoutersScreen(onOpen: () -> Unit) {
                     }
                 }
             }
+            }
         }
+    }
+
+    confirmForget?.let { r ->
+        val unsent = outbox.count { it.serial == r.serial }
+        AlertDialog(
+            onDismissRequest = { confirmForget = null },
+            title = { Text("Remove ${r.model ?: "router"} ${r.serial}?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "The router is removed from this phone. The server keeps its record and passwords: " +
+                            "scanning the router again brings them back.",
+                    )
+                    if (r.pendingPassword != null || r.pendingAccess != null) {
+                        Text(
+                            "A password or Wi-Fi change on this router is not confirmed. Without it, nobody may be able to log in " +
+                                "to the router again except by a factory reset.",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    if (unsent > 0) {
+                        Text(
+                            "$unsent ${if (unsent == 1) "change has" else "changes have"} not reached the server yet and will be lost. " +
+                                "Sync first if the phone can go online.",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    graph.router.forget(r.serial)
+                    confirmForget = null
+                }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmForget = null }) { Text("Cancel") } },
+        )
     }
 
     if (scanning) {

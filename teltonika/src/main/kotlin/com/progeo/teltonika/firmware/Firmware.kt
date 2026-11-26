@@ -61,6 +61,18 @@ data class FirmwareChannel(
         return (specific ?: forModel.firstOrNull { it.productCodePrefix == null })?.let { image(it.image) }
     }
 
+    /**
+     * For a router that does not report its model: the approved image of its current firmware
+     * family (`RUT2M` from `RUT2M_R_00.07.06.1`). Null when no image or several different ones
+     * are approved for that family; variant approvals (product code prefix) are left out.
+     */
+    fun approvedForFamily(family: String): FirmwareImage? =
+        approved.filter { it.productCodePrefix == null }
+            .mapNotNull { image(it.image) }
+            .filter { it.family.equals(family, ignoreCase = true) }
+            .distinctBy { it.id }
+            .singleOrNull()
+
     companion object {
         const val SUPPORTED_FORMAT = 1
         val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
@@ -114,14 +126,17 @@ sealed interface FirmwareCheck {
 object FirmwarePolicy {
     /**
      * Checks [image] against the router ([model], [current] firmware). The family must match, the
-     * model must be listed, the current version must be at least `min_from`.
+     * model must be listed, the current version must be at least `min_from`. Without a [model] the
+     * family of the current firmware decides: it names the hardware platform the image is built for.
      */
     fun check(image: FirmwareImage, model: String?, current: FirmwareVersion?): FirmwareCheck {
-        if (model == null) return FirmwareCheck.Refused("The router did not report its model.")
-        if (image.models.none { it.equals(model, ignoreCase = true) }) {
+        if (model != null && image.models.none { it.equals(model, ignoreCase = true) }) {
             return FirmwareCheck.Refused("This firmware is not for the $model.")
         }
         if (current == null) return FirmwareCheck.Refused("The router did not report its firmware version.")
+        if (model == null && current.family == null) {
+            return FirmwareCheck.Refused("The router reported neither its model nor its firmware family.")
+        }
         if (current.family != null && !current.family.equals(image.family, ignoreCase = true)) {
             return FirmwareCheck.Refused("This firmware is for ${image.family}, the router runs ${current.family}.")
         }

@@ -122,8 +122,8 @@ class RouterBackendTest {
         val modem = ModemStatus.from(
             buildJsonObject {
                 put("simstate", "Inserted")
-                put("pinstate", "OK")
-                put("netstate", "Registered (home)")
+                put("pinstate", "Inserted")
+                put("netstate", "Registered, home")
                 put("operator", "AT&T")
                 put("rsrp", "-85")
                 put("sinr", "15")
@@ -138,5 +138,15 @@ class RouterBackendTest {
         assertEquals(false, bad.first { it.title == "SIM card" }.ok)
         assertEquals(false, bad.first { it.title == "Signal" }.ok)
         assertEquals(false, bad.first { it.title == "Mobile data" }.ok)
+
+        // Values as the API spec lists them.
+        fun check(pin: String, net: String) = MobileChecks.of(
+            listOf(ModemStatus.from(buildJsonObject { put("simstate", "Inserted"); put("pinstate", pin); put("netstate", net) })),
+            listOf(mob),
+        )
+        assertEquals(true, check("Inserted", "Roaming").first { it.title == "Registered in the network" }.ok)
+        assertEquals(false, check("Not ready", "Searching").first { it.title == "SIM PIN" }.ok)
+        assertEquals(false, check("Required PIN, 3 attempts left", "Denied").first { it.title == "SIM PIN" }.ok)
+        assertEquals(false, check("Inserted", "Not registered").first { it.title == "Registered in the network" }.ok)
     }
 }

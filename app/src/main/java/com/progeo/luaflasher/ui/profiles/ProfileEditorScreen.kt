@@ -37,6 +37,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -69,6 +70,7 @@ import com.progeo.luaflasher.data.Profile
 import com.progeo.luaflasher.ui.config.ConfigSectionCards
 import com.progeo.luaflasher.ui.config.sectionsOf
 import com.progeo.luaflasher.graph
+import com.progeo.luaflasher.router.RouterWifi
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -196,6 +198,8 @@ fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Un
     val vm: ProfileEditorViewModel = viewModel(key = "profile-$id")
     val scope = rememberCoroutineScope()
     LaunchedEffect(id) { vm.load(graph, id) }
+    val routers by graph.routerStore.routers.collectAsState()
+    val routerWifis = remember(routers) { RouterWifi.of(routers) }
     val template = vm.template
     val isNew = id == null
     var tab by remember { mutableIntStateOf(0) }
@@ -281,6 +285,7 @@ fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Un
                                 issues = issues,
                                 onSetSection = vm::setSection,
                                 sections = sectionsOf(template, vm.config),
+                                routerWifis = routerWifis,
                             )
                         }
                     }

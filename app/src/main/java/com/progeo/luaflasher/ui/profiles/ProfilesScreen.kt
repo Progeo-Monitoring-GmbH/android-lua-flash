@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import com.progeo.luaflasher.core.config.LuaJson
 import com.progeo.luaflasher.data.Profile
 import com.progeo.luaflasher.graph
+import com.progeo.luaflasher.ui.SwipeToDelete
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -84,7 +85,9 @@ fun ProfilesScreen(onEdit: (String) -> Unit, onScan: () -> Unit, onRead: () -> U
                 }
             }
             if (profiles.isEmpty()) item { Text("No profiles yet. Scan a config QR code or read one from a controller.") }
+            if (profiles.isNotEmpty()) item { Text("Swipe a profile sideways to delete it.", style = MaterialTheme.typography.bodySmall) }
             items(profiles, key = { it.id }) { p ->
+                SwipeToDelete(onDelete = { confirmDelete = p }) {
                 Card(
                     Modifier
                         .fillMaxWidth()
@@ -112,6 +115,7 @@ fun ProfilesScreen(onEdit: (String) -> Unit, onScan: () -> Unit, onRead: () -> U
                         IconButton(onClick = { confirmDelete = p }) { Icon(Icons.Default.Delete, contentDescription = "Delete") }
                     }
                 }
+                }
             }
         }
     }
@@ -120,6 +124,7 @@ fun ProfilesScreen(onEdit: (String) -> Unit, onScan: () -> Unit, onRead: () -> U
         AlertDialog(
             onDismissRequest = { confirmDelete = null },
             title = { Text("Delete ${p.name}?") },
+            text = { Text("The profile is removed from this phone. Boards already flashed with it keep their config.") },
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch { graph.profiles.delete(p.id) }

@@ -36,18 +36,21 @@ class FakeRutos(
         private set
     var lockedOut = false
 
+    /** The router's verdict on an uploaded image (`fw_upload`). */
+    var firmwareCheck: JsonObject = section("valid" to "1", "hw_support" to "1", "authorized" to "1", "fw_version" to "RUT2M_R_00.07.24.8", "newer" to "1")
+
     var device: JsonObject = buildJsonObject {
         put("static", buildJsonObject {
             put("fw_version", "RUT2M_R_00.07.06.1")
             put("device_name", "RUT241")
             put("hostname", "RUT241")
         })
-        put("mnf_info", buildJsonObject {
+        // As in the API spec: the product code is `mnfinfo.name`.
+        put("mnfinfo", buildJsonObject {
             put("serial", "1234567890")
             put("mac", "001E42AABBCC")
             put("name", "RUT241010000")
-            put("product_code", "RUT241010000")
-            put("hw_version", "0101")
+            put("hwver", "0101")
             put("batch", "0007")
         })
     }
@@ -70,6 +73,13 @@ class FakeRutos(
         })
     }
 
+    /** Wi-Fi networks by section ID: the factory access point and a client link to another Wi-Fi. */
+    val wifi = linkedMapOf(
+        "default_radio0" to section("id" to "default_radio0", "ssid" to "RUT241_ABCD", "key" to "Wf8x2kPq", "encryption" to "sae-mixed", "mode" to "ap"),
+        "guest" to section("id" to "guest", "ssid" to "RUT241_Guest", "encryption" to "none", "mode" to "ap"),
+        "wifi_client" to section("id" to "wifi_client", "ssid" to "Office", "mode" to "sta"),
+    )
+
     override fun dispatch(request: RecordedRequest): MockResponse {
         val path = request.requestUrl!!.encodedPath
         requests += "${request.method} $path"
@@ -82,20 +92,39 @@ class FakeRutos(
             path == "/api/modems/status" -> ok(modems)
             path == "/api/users/config" -> ok(buildJsonArray { add(buildJsonObject { put("id", "cfg01"); put("username", "admin") }) })
             path == "/api/users/config/cfg01" && request.method == "PUT" -> {
-                password = body(request)["data"]!!.jsonObject["password"]!!.jsonPrimitive.content
+                val data = body(request)["data"]!!.jsonObject
+                if (data["current_password"]?.jsonPrimitive?.content != password) return error(422, 151, "Current password is incorrect")
+                password = data["password"]!!.jsonPrimitive.content
                 ok(buildJsonObject { put("id", "cfg01") })
             }
-            path == "/api/firmware/device/upload" -> {
+            path == "/api/firmware/actions/upload_device_firmware" -> {
                 uploadedBytes = request.bodySize
-                ok(buildJsonObject { put("size", request.bodySize) })
+                ok(firmwareCheck)
+            }
+            path == "/api/firmware/actions/verify" -> ok(firmwareCheck)
+            path == "/api/firmware/actions/delete_device_firmware" -> {
+                uploadedBytes = 0
+                ok(buildJsonObject { put("response", "ok") })
             }
             path == "/api/firmware/actions/upgrade" -> {
                 upgradeKeepSettings = body(request)["data"]?.jsonObject?.get("keep_settings")?.jsonPrimitive?.content
                 ok(buildJsonObject { })
             }
-            path == "/api/backup/actions/generate" -> ok(buildJsonObject { })
+            path == "/api/backup/actions/generate" ->
+                if (body(request)["data"]?.jsonObject?.get("type")?.jsonPrimitive?.content in setOf("api", "sysupgrade")) {
+                    ok(buildJsonObject { put("sha256", "00") })
+                } else {
+                    error(422, 151, "type is required")
+                }
             path == "/api/backup/actions/download" ->
                 MockResponse().setHeader("Content-Type", "application/octet-stream").setBody(Buffer().write(BACKUP))
+            path == "/api/wireless/interfaces/config" -> ok(JsonArray(wifi.values.toList()))
+            path.startsWith("/api/wireless/interfaces/config/") && path !in config && request.method == "PUT" -> {
+                val id = path.substringAfterLast('/')
+                val old = wifi[id] ?: return error(404, 122, "No such section")
+                wifi[id] = JsonObject(old + body(request)["data"]!!.jsonObject)
+                ok(wifi.getValue(id))
+            }
             path in config && request.method == "GET" -> ok(config.getValue(path))
             path in config && request.method == "PUT" -> {
                 val data = body(request)["data"]!!.jsonObject

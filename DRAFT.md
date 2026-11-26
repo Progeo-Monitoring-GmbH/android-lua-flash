@@ -46,9 +46,13 @@ What this means for us:
 - The API changes between firmware versions. Teltonika's docs are published **per model and per
   firmware version** [verified]. A forum thread shows calls returning "Endpoint not implemented" on older
   firmware, and Teltonika said full API support starts with **RutOS 07.06** [verified].
-- A firmware upgrade action exists (`/firmware/actions/upgrade` with `data.keep_settings`). The upload step,
-  the multipart field name and the payload are **[unverified]**: the docs site renders with JavaScript and
-  we could not read it automatically. Someone has to read it in a browser for our exact firmware version.
+- Firmware: `POST /firmware/actions/upload_device_firmware` (multipart field `file`), then
+  `POST /firmware/actions/verify` (answer: `valid`, `hw_support`, `authorized`, `sha256`, …), then
+  `POST /firmware/actions/upgrade` with `data.keep_settings` **[verified in the spec]**. The docs site renders
+  with JavaScript, but its OpenAPI specs can be read directly: the index is
+  `https://developers.teltonika-networks.com/docs/available-docs.json` (model → firmware version → file),
+  each spec is `https://developers.teltonika-networks.com/docs/<file>` (e.g. `7.24.8_v1.16.7.json`).
+  On 2026-11-25 every path in `RutosPaths` was checked against the specs for 7.10, 7.19 and 7.24.8.
 - The router uses HTTPS with a self-signed certificate at `192.168.1.1` by default **[unverified for our
   units]**.
 
@@ -151,11 +155,15 @@ Scan QR ─► Parse ─► Look up serial in backend ─► Join router Wi-Fi �
 3. **Join Wi-Fi** with the SSID/passphrase from the QR (or the stored ones if we changed them). Android
    asks once in a system dialog.
 4. **TLS pin**, **login**, **identity check** (gap 6).
-5. **Backup.** Download the config backup and upload it to the backend (queue it if offline) before any
-   change.
+5. **Backup.** Download the config backup and upload it to the backend (queue it if offline). Optional:
+   the routers are fresh, so the firmware update does not wait for it, and applying a configuration only
+   tries it (a failed backup does not stop the change).
 6. **Firmware** (section 6). If the router is not on the approved version: upload it, upgrade, wait for
    the reboot, reconnect, check the version.
-7. **Apply template** (section 4). Show the diff and ask the installer to confirm.
+7. **Wi-Fi name and password.** Decided (2026-11-25): no templates on site, only a new SSID and WPA2 key
+   (`PUT /api/wireless/interfaces/config/<id>` on every access point). Stored as pending on phone and
+   server first, read back from the router, then the app reconnects with the new values. Section 4
+   (templates) is parked; the library code stays, the app no longer uses it.
 8. **Password** (section 5).
 9. **Mobile check.** SIM detected, PIN state, registered to the network, operator, band, signal values,
    data session up, and a ping from the router to our backend. If the SIM or APN is wrong, show what to fix.
@@ -320,7 +328,7 @@ Built and tested on the JVM. **Not yet run against a real router or on a phone w
 |---|---|---|
 | Label codes (device, box, serial barcode, escapes) | `teltonika/…/label/RouterLabel.kt` | done, tests |
 | RutOS client: login, re-login before the 5 min expiry and after a 401, envelope, error codes, upload with progress, file download | `teltonika/…/api/RutosClient.kt` | done, tests against `FakeRutos` |
-| Typed calls and lenient models (device, modems/SIM/signal, interfaces, DHCP) | `teltonika/…/api/` | done; **all paths except login/upgrade unverified**, all in `RutosPaths` |
+| Typed calls and lenient models (device, modems/SIM/signal, interfaces, DHCP) | `teltonika/…/api/` | done; all paths and field names checked against Teltonika's OpenAPI specs (7.10/7.19/7.24.8), not yet against a real router |
 | Certificate pinning on first use, change detection | `teltonika/…/tls/PinningTrustManager.kt` | done, tests over real TLS |
 | Firmware versions, signed channel format, checks (family, model, `min_from`, downgrade) | `teltonika/…/firmware/Firmware.kt` | done, tests |
 | Templates: placeholders, overrides, diff, apply (connection last), read back | `teltonika/…/config/Template.kt` | done, tests |

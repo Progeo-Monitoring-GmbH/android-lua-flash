@@ -21,19 +21,18 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SettingsInputAntenna
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -61,15 +60,18 @@ import com.progeo.luaflasher.router.MobileChecks
 import com.progeo.luaflasher.router.Phase
 import com.progeo.luaflasher.router.RouterRecord
 import com.progeo.luaflasher.router.RouterUi
+import com.progeo.luaflasher.router.RouterWifi
 import com.progeo.luaflasher.router.SetupStep
 import com.progeo.luaflasher.router.StepLog
 import com.progeo.luaflasher.router.Via
 import com.progeo.luaflasher.router.firmwareShort
 import com.progeo.luaflasher.router.mask
-import com.progeo.teltonika.api.SignalQuality
-import com.progeo.teltonika.config.SectionResult
-import com.progeo.teltonika.firmware.FirmwareCheck
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import com.progeo.teltonika.api.SignalQuality
+import com.progeo.teltonika.api.WifiRules
+import com.progeo.teltonika.credentials.Passwords
+import com.progeo.teltonika.firmware.FirmwareCheck
 
 /** Portal permission to read router passwords in the app. */
 private const val PERMISSION_CREDENTIALS = "module_routers_credentials"
@@ -136,7 +138,7 @@ fun RouterScreen(onBack: () -> Unit, onAntenna: () -> Unit) {
                 item { SignalSection(s, onAntenna) }
                 item { SystemSection(s, record) }
                 item { MobileSection(s) }
-                item { NetworkSection(s, record) }
+                item { NetworkSection(s) }
                 item { MoreSection(s) }
             }
         }
@@ -194,8 +196,10 @@ private fun SetupChecklist(s: RouterUi, record: RouterRecord?) {
     val idle = s.busy == null
     var confirmPassword by remember { mutableStateOf(false) }
     var confirmFirmware by remember { mutableStateOf(false) }
-    var confirmApply by remember { mutableStateOf(false) }
+    var wifiOpen by remember { mutableStateOf(false) }
+    var wifiChange by remember { mutableStateOf<Pair<String, String>?>(null) }
     var reportOpen by remember { mutableStateOf(false) }
+    var chooseProfile by remember { mutableStateOf(false) }
 
     Section("Setup") {
         StepRow(SetupStep.BACKUP, s, "Saves the router's configuration before any change.") {
@@ -216,13 +220,28 @@ private fun SetupChecklist(s: RouterUi, record: RouterRecord?) {
                 TextButton(onClick = { controller.checkFirmware() }, enabled = idle) { Text("Check") }
             }
         }
+        val wifiNow = record?.access ?: record?.factoryAccess
         StepRow(
-            SetupStep.TEMPLATE, s,
-            record?.templateId?.let { "Last applied: $it v${record.templateVersion}" } ?: "Our settings for this region and model.",
+            SetupStep.WIFI, s,
+            when {
+                record?.pendingAccess != null -> "A change to \"${record.pendingAccess.ssid}\" was not confirmed. Set it again."
+                wifiNow?.ssid != null -> "Now: \"${wifiNow.ssid}\"" + if (record?.access == null) " (factory)" else ""
+                else -> "Name and password of the router's Wi-Fi."
+            },
         ) {
-            TextButton(onClick = { controller.loadTemplates() }, enabled = idle) { Text("Choose") }
+            TextButton(onClick = { wifiOpen = !wifiOpen }, enabled = idle) { Text(if (wifiOpen) "Cancel" else "Change") }
         }
-        TemplatePanel(s, idle, onApply = { confirmApply = true })
+        if (wifiOpen) {
+            WifiPanel(
+                currentSsid = record?.pendingAccess?.ssid ?: wifiNow?.ssid.orEmpty(),
+                idle = idle,
+                onSet = { ssid, key -> wifiChange = ssid to key },
+            )
+        } else if (wifiNow?.ssid != null && record?.pendingAccess == null) {
+            TextButton(onClick = { chooseProfile = true }, enabled = idle, modifier = Modifier.padding(start = 28.dp)) {
+                Text("Use this Wi-Fi in a microBOX profile")
+            }
+        }
         StepRow(
             SetupStep.PASSWORD, s,
             when {
@@ -267,32 +286,36 @@ private fun SetupChecklist(s: RouterUi, record: RouterRecord?) {
                 Text(
                     (if (downgrade) "This is OLDER than the installed version. " else "") +
                         "The router keeps its settings, installs the firmware and restarts. This takes several minutes: " +
-                        "keep it powered and stay close. A backup is saved first.",
+                        "keep it powered and stay close.",
                 )
             },
             confirmButton = { TextButton(onClick = { confirmFirmware = false; controller.installFirmware() }) { Text("Install") } },
             dismissButton = { TextButton(onClick = { confirmFirmware = false }) { Text("Cancel") } },
         )
     }
-    if (confirmApply) {
-        val plan = s.plan
+    wifiChange?.let { (ssid, key) ->
         AlertDialog(
-            onDismissRequest = { confirmApply = false },
-            title = { Text("Apply ${plan?.changeCount ?: 0} changes?") },
+            onDismissRequest = { wifiChange = null },
+            title = { Text("Set the Wi-Fi to \"$ssid\"?") },
             text = {
                 Text(
-                    "A backup is saved first." +
-                        if (plan?.affectsConnection == true) {
-                            " Some changes affect the connection (Wi-Fi or address): they are applied last and the app reconnects with the new values."
-                        } else {
-                            ""
-                        },
+                    "Name and password are stored on the phone and the server first, then set on the router. " +
+                        "The router restarts its Wi-Fi: devices on it lose the connection" +
+                        (if (s.via == Via.WIFI) " and the app reconnects with the new values." else ".") +
+                        " Afterwards the Wi-Fi on the label no longer works.",
                 )
             },
-            confirmButton = { TextButton(onClick = { confirmApply = false; controller.applyPlan() }) { Text("Apply") } },
-            dismissButton = { TextButton(onClick = { confirmApply = false }) { Text("Cancel") } },
+            confirmButton = {
+                TextButton(onClick = {
+                    wifiChange = null
+                    wifiOpen = false
+                    controller.setWifi(ssid, key)
+                }) { Text("Set Wi-Fi") }
+            },
+            dismissButton = { TextButton(onClick = { wifiChange = null }) { Text("Cancel") } },
         )
     }
+    if (chooseProfile) ProfilePickerDialog(onDismiss = { chooseProfile = false })
     if (reportOpen) {
         var note by remember { mutableStateOf("") }
         AlertDialog(
@@ -300,7 +323,7 @@ private fun SetupChecklist(s: RouterUi, record: RouterRecord?) {
             title = { Text("Installation report") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Router data, firmware, configuration and signal values are added automatically.", style = MaterialTheme.typography.bodySmall)
+                    Text("Router data, firmware, Wi-Fi name and signal values are added automatically.", style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(value = note, onValueChange = { note = it }, label = { Text("Note (site, mounting, antenna)") }, minLines = 3)
                 }
             },
@@ -327,49 +350,37 @@ private fun StepRow(step: SetupStep, s: RouterUi, detail: String, action: @Compo
     }
 }
 
+/** New Wi-Fi name and password; a random password is suggested. */
 @Composable
-private fun TemplatePanel(s: RouterUi, idle: Boolean, onApply: () -> Unit) {
-    val controller = LocalContext.current.graph.router
-    val plan = s.plan
-    if (s.templates.isEmpty() && plan == null) return
+private fun WifiPanel(currentSsid: String, idle: Boolean, onSet: (ssid: String, key: String) -> Unit) {
+    var ssid by remember { mutableStateOf(currentSsid) }
+    var key by remember { mutableStateOf(Passwords.generate(12)) }
+    val problem = WifiRules.problem(ssid, key)
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            s.templates.forEach { t ->
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable(enabled = idle) { controller.planTemplate(t) }) {
-                    RadioButton(selected = plan?.template?.id == t.id, onClick = { controller.planTemplate(t) }, enabled = idle)
-                    Text("${t.title} (v${t.version}${t.region?.let { ", $it" } ?: ""})")
-                }
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = ssid,
+                onValueChange = { ssid = it },
+                label = { Text("Wi-Fi name (SSID)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = key,
+                onValueChange = { key = it },
+                label = { Text("Wi-Fi password") },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                trailingIcon = {
+                    IconButton(onClick = { key = Passwords.generate(12) }) { Icon(Icons.Default.Refresh, contentDescription = "New random password") }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (problem != null && (ssid.isNotEmpty() || key.isNotEmpty())) {
+                Text(problem, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
-            if (plan != null) {
-                HorizontalDivider()
-                when {
-                    plan.inSync -> Text("The router matches ${plan.template.title}.", color = StatusColors.ok)
-                    else -> Text("${plan.changeCount} differences", style = MaterialTheme.typography.titleSmall)
-                }
-                plan.sections.forEach { sp ->
-                    sp.error?.let { Text("${sp.section.title}: $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                    sp.changes.forEach { c ->
-                        fun show(e: kotlinx.serialization.json.JsonElement?) =
-                            if (c.secret) mask((e as? JsonPrimitive)?.content) else ((e as? JsonPrimitive)?.content ?: e?.toString() ?: "–").ifEmpty { "–" }
-                        Text(
-                            "${sp.section.title} · ${c.key}: ${show(c.current)} → ${show(c.desired)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                        )
-                    }
-                }
-                s.applyResult?.results?.filterNot { it is SectionResult.Applied || it is SectionResult.AppliedUnverified }?.forEach { r ->
-                    val text = when (r) {
-                        is SectionResult.Failed -> "${r.section.title}: ${r.message}"
-                        is SectionResult.Mismatch -> "${r.section.title}: the router kept other values for ${r.keys.joinToString()}"
-                        else -> ""
-                    }
-                    Text(text, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                }
-                if (!plan.inSync && plan.changeCount > 0) {
-                    Button(onClick = onApply, enabled = idle) { Text("Apply ${plan.changeCount} changes") }
-                }
-            }
+            Button(onClick = { onSet(ssid, key) }, enabled = idle && problem == null) { Text("Set Wi-Fi") }
         }
     }
 }
@@ -485,10 +496,7 @@ private fun MobileSection(s: RouterUi) {
 }
 
 @Composable
-private fun NetworkSection(s: RouterUi, record: RouterRecord?) {
-    val graph = LocalContext.current.graph
-    val profiles by graph.profiles.profiles.collectAsState()
-    var chooseProfile by remember { mutableStateOf(false) }
+private fun NetworkSection(s: RouterUi) {
     Section("Network") {
         s.interfaces.forEach { i ->
             val state = when (i.up) {
@@ -500,38 +508,46 @@ private fun NetworkSection(s: RouterUi, record: RouterRecord?) {
         }
         Text("Connected devices (${s.leases.size})", style = MaterialTheme.typography.bodyMedium)
         s.leases.forEach { l -> Field(l.hostname ?: "device", listOfNotNull(l.ip, l.mac).joinToString(" · ")) }
-        val wifi = record?.access ?: record?.factoryAccess
-        if (wifi?.ssid != null) {
-            OutlinedButton(onClick = { chooseProfile = true }, enabled = s.busy == null) { Text("Use this Wi-Fi in a microBOX profile") }
-        }
     }
-    if (chooseProfile) {
-        AlertDialog(
-            onDismissRequest = { chooseProfile = false },
-            title = { Text("Which microBOX profile?") },
-            text = {
-                if (profiles.isEmpty()) {
-                    Text("No profiles on the phone. Create one in Profiles first.")
-                } else {
-                    LazyColumn {
-                        items(profiles, key = { it.id }) { p ->
+}
+
+/** The microBOX profiles on the phone; one tap writes this router's Wi-Fi into the chosen one. */
+@Composable
+private fun ProfilePickerDialog(onDismiss: () -> Unit) {
+    val graph = LocalContext.current.graph
+    val profiles by graph.profiles.profiles.collectAsState()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Which microBOX profile?") },
+        text = {
+            if (profiles.isEmpty()) {
+                Text("No profiles on the phone. Create one in Profiles first.")
+            } else {
+                LazyColumn {
+                    items(profiles, key = { it.id }) { p ->
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onDismiss()
+                                    graph.router.copyWifiToProfile(p.id)
+                                }
+                                .padding(vertical = 10.dp),
+                        ) {
+                            Text(p.name, style = MaterialTheme.typography.bodyLarge)
+                            val ssid = ((p.config[RouterWifi.SECTION] as? JsonObject)?.get("ssid") as? JsonPrimitive)?.content
                             Text(
-                                p.name,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        chooseProfile = false
-                                        graph.router.copyWifiToProfile(p.id)
-                                    }
-                                    .padding(vertical = 12.dp),
+                                if (ssid.isNullOrEmpty()) "no Wi-Fi set" else "now: $ssid",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
                 }
-            },
-            confirmButton = { TextButton(onClick = { chooseProfile = false }) { Text("Cancel") } },
-        )
-    }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable

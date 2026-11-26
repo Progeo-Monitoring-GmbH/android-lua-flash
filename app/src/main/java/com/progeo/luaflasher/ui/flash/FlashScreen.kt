@@ -68,6 +68,7 @@ import com.progeo.luaflasher.core.nodemcu.InstallStep
 import com.progeo.luaflasher.data.AppSettings
 import com.progeo.luaflasher.flash.FlashState
 import com.progeo.luaflasher.graph
+import com.progeo.luaflasher.router.RouterWifi
 import com.progeo.core.ui.MessageCard
 import com.progeo.core.ui.Section
 import com.progeo.luaflasher.ui.config.ConfigSectionCards
@@ -130,6 +131,8 @@ private fun SetupContent(vm: FlashSetupViewModel) {
     val profiles by graph.profiles.profiles.collectAsState()
     val settings by graph.settings.settings.collectAsState(AppSettings())
     val devices by graph.usb.devices.collectAsState()
+    val routers by graph.routerStore.routers.collectAsState()
+    val routerWifis = remember(routers) { RouterWifi.of(routers) }
     var scanning by remember { mutableStateOf(false) }
 
     // Only complete, verified bundles; unsigned only in developer mode.
@@ -228,6 +231,7 @@ private fun SetupContent(vm: FlashSetupViewModel) {
                     onSetSection = vm::setSection,
                     hiddenPaths = setOf(DeviceConfigBuilder.DEVICE_HASH),
                     hiddenNote = "The device hash is set above.",
+                    routerWifis = routerWifis,
                 )
             }
         }

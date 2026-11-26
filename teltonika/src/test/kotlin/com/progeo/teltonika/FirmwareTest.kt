@@ -1,9 +1,11 @@
 package com.progeo.teltonika
 
+import com.progeo.teltonika.api.DeviceInfo
 import com.progeo.teltonika.firmware.FirmwareChannel
 import com.progeo.teltonika.firmware.FirmwareCheck
 import com.progeo.teltonika.firmware.FirmwarePolicy
 import com.progeo.teltonika.firmware.FirmwareVersion
+import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -67,7 +69,41 @@ class FirmwareTest {
         assertIs<FirmwareCheck.Refused>(FirmwarePolicy.check(image, "RUT241", v("RUT2M_R_00.07.04")))
         assertIs<FirmwareCheck.Refused>(FirmwarePolicy.check(image, "RUT986", v("RUT2M_R_00.07.10")))
         assertIs<FirmwareCheck.Refused>(FirmwarePolicy.check(image, "RUT241", v("RUT9M_R_00.07.10")))
-        assertIs<FirmwareCheck.Refused>(FirmwarePolicy.check(image, null, v("RUT2M_R_00.07.10")))
         assertIs<FirmwareCheck.Refused>(FirmwarePolicy.check(image, "RUT241", null))
+    }
+
+    @Test
+    fun `without a model the firmware family decides`() {
+        assertEquals("rut2m-0718", channel.approvedForFamily("rut2m")!!.id)
+        assertEquals("rut9m-0718", channel.approvedForFamily("RUT9M")!!.id)
+        assertNull(channel.approvedForFamily("RUTX"))
+
+        val image = channel.image("rut2m-0718")!!
+        assertIs<FirmwareCheck.Ok>(FirmwarePolicy.check(image, null, v("RUT2M_R_00.07.10")))
+        assertIs<FirmwareCheck.Refused>(FirmwarePolicy.check(image, null, v("RUT9M_R_00.07.10")))
+        assertIs<FirmwareCheck.Refused>(FirmwarePolicy.check(image, null, v("7.10")))
+        assertIs<FirmwareCheck.Refused>(FirmwarePolicy.check(image, null, null))
+    }
+
+    @Test
+    fun `several images for one family are ambiguous`() {
+        val two = FirmwareChannel.parse(
+            """
+            {"images":[
+              {"id":"a","version":"RUT9M_R_00.07.18","family":"RUT9M","models":["RUT901"],"url":"a","size":1,"sha256":"a"},
+              {"id":"b","version":"RUT9M_R_00.07.19","family":"RUT9M","models":["RUT986"],"url":"b","size":1,"sha256":"b"}],
+             "approved":[{"model":"RUT901","image":"a"},{"model":"RUT986","image":"b"}]}
+            """.trimIndent().toByteArray(),
+        )
+        assertNull(two.approvedForFamily("RUT9M"))
+    }
+
+    @Test
+    fun `model found anywhere in the device answer`() {
+        fun device(json: String) = DeviceInfo.from(Json.parseToJsonElement(json))
+        assertEquals("RUT241", device("""{"data":{"mnfinfo":{"name":"RUT241010000"},"static":{"fw_version":"RUT2M_R_00.07.06.1"}}}""").modelName)
+        assertEquals("RUT901", device("""{"model":"RUT901"}""").modelName)
+        // The firmware family is no model.
+        assertNull(device("""{"static":{"fw_version":"RUT2M_R_00.07.06.1","hostname":"router"}}""").modelName)
     }
 }

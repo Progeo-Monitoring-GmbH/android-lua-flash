@@ -19,10 +19,7 @@ import com.progeo.teltonika.api.RouterLoginException
 import com.progeo.teltonika.api.RouterUnreachableException
 import com.progeo.teltonika.api.RutosClient
 import com.progeo.teltonika.api.Signal
-import com.progeo.teltonika.config.ApplyResult
-import com.progeo.teltonika.config.ConfigPlan
-import com.progeo.teltonika.config.RouterTemplate
-import com.progeo.teltonika.config.TemplateEngine
+import com.progeo.teltonika.api.WifiRules
 import com.progeo.teltonika.credentials.Identity
 import com.progeo.teltonika.credentials.LoginCandidate
 import com.progeo.teltonika.credentials.LoginOrder
@@ -47,7 +44,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -64,7 +61,7 @@ enum class Phase { IDLE, CONNECTING, CONNECTED, FAILED }
 enum class SetupStep(val title: String) {
     BACKUP("Backup"),
     FIRMWARE("Firmware"),
-    TEMPLATE("Configuration"),
+    WIFI("Wi-Fi name and password"),
     PASSWORD("Own password"),
     MOBILE("Mobile check"),
     REPORT("Report"),
@@ -93,9 +90,6 @@ data class RouterUi(
     val leases: List<DhcpLease> = emptyList(),
     val statusErrors: List<String> = emptyList(),
     val signalHistory: List<Signal> = emptyList(),
-    val templates: List<RouterTemplate> = emptyList(),
-    val plan: ConfigPlan? = null,
-    val applyResult: ApplyResult? = null,
     val firmwareImage: FirmwareImage? = null,
     val firmwareCheck: FirmwareCheck? = null,
     val done: Set<SetupStep> = emptySet(),
@@ -116,7 +110,6 @@ class RouterController(
     private val settings: SettingsRepository,
     private val profiles: ProfileStore,
     private val http: OkHttpClient,
-    private val templateCache: File,
     private val cipher: SecretCipher,
     private val backupDir: File,
 ) {
@@ -176,6 +169,15 @@ class RouterController(
         scope.launch { runCatching { old?.client?.logout() } }
         network.release()
         _state.value = RouterUi()
+    }
+
+    /**
+     * Removes the router from this phone, with its unsent changes; the backend keeps its record.
+     * Closes it first if it is open.
+     */
+    fun forget(serial: String) {
+        if (_state.value.serial == serial) close()
+        scope.launch { store.delete(serial) }
     }
 
     private fun stopJobs() {
@@ -432,9 +434,15 @@ class RouterController(
             ?: throw RouterException("No router firmware list on the phone. Sync once with internet.")
         val device = _state.value.device ?: routerApi.device()
         val model = device.modelName ?: record.model
-            ?: throw RouterException("The router did not report its model.")
-        val image = channel.approvedFor(model, device.productCode ?: record.productCode)
-            ?: throw RouterException("No firmware is approved for the $model yet.")
+        // Without a model, the family of the running firmware (RUT2M, RUT9M) picks the image.
+        val family = device.firmwareVersion?.family
+        val image = when {
+            model != null -> channel.approvedFor(model, device.productCode ?: record.productCode)
+                ?: throw RouterException("No firmware is approved for the $model yet.")
+            family != null -> channel.approvedForFamily(family)
+                ?: throw RouterException("No firmware is approved for $family routers yet.")
+            else -> throw RouterException("The router reported neither its model nor its firmware version.")
+        }
         val check = FirmwarePolicy.check(image, model, device.firmwareVersion)
         _state.update { it.copy(firmwareImage = image, firmwareCheck = check) }
         if (check == FirmwareCheck.AlreadyInstalled) markDone(SetupStep.FIRMWARE)
@@ -446,12 +454,24 @@ class RouterController(
         antenna(false)
         busy("Downloading ${image.version}")
         val file = firmware.download(settings.current().baseUrl, image) { done, total -> progress(done, total) }
-        if (SetupStep.BACKUP !in _state.value.done) {
-            busy("Saving a backup first")
-            doBackup()
-        }
+        // No backup first: the routers are fresh, and the upgrade keeps the settings anyway.
         busy("Uploading the firmware to the router")
-        routerApi.uploadFirmware(file) { sent, total -> progress(sent, total) }
+        val uploaded = routerApi.uploadFirmware(file) { sent, total -> progress(sent, total) }
+        busy("The router checks the firmware")
+        _state.update { it.copy(progress = null) }
+        val verified = try {
+            routerApi.verifyFirmware()
+        } catch (e: RouterApiException) {
+            // Older firmware checks during the upload only.
+            if (e.notImplemented) uploaded else throw e
+        }
+        val problem = verified.problem
+            ?: (verified.sha256 ?: uploaded.sha256)?.takeIf { !it.equals(image.sha256, ignoreCase = true) }
+                ?.let { "The file on the router differs from the downloaded one. Try again." }
+        if (problem != null) {
+            runCatching { routerApi.deleteUploadedFirmware() }
+            throw RouterException(problem)
+        }
         busy("Starting the installation")
         try {
             routerApi.upgradeFirmware(keepSettings = true)
@@ -470,61 +490,45 @@ class RouterController(
         markDone(SetupStep.FIRMWARE)
     }
 
-    fun loadTemplates() = launchOp("Loading configurations") {
-        val model = _state.value.device?.modelName ?: record.model
-        val list = try {
-            backend.templates(model).also(::cacheTemplates)
-        } catch (e: UserFacingException) {
-            cachedTemplates().ifEmpty { throw e }
-        }
-        _state.update { it.copy(templates = list.filter { t -> t.fits(model) }, plan = null, applyResult = null) }
-    }
-
-    fun planTemplate(template: RouterTemplate) = launchOp("Comparing with ${template.title}") {
-        var rec = record
-        if (rec.templateWifiKey == null) {
-            rec = store.update(serial, OutboxOp.SaveCredentials(serial)) { it!!.copy(templateWifiKey = Passwords.generate(12)) }
-        }
-        val resolved = TemplateEngine.resolve(
-            template,
-            TemplateEngine.variables(serial, rec.mac, rec.model ?: _state.value.device?.modelName, rec.templateWifiKey),
-            rec.overrides,
-        )
-        val plan = TemplateEngine.plan(routerApi.client, resolved)
-        _state.update { it.copy(plan = plan, applyResult = null) }
-        if (plan.inSync) markDone(SetupStep.TEMPLATE)
-    }
-
-    fun applyPlan() = launchOp("Applying the configuration") {
-        val plan = _state.value.plan ?: throw RouterException("Compare with a configuration first.")
+    /**
+     * New Wi-Fi name and password. Stored as pending (phone, then server) before the router gets
+     * them, so a crash cannot lose the way back in; confirmed after reading them back from the
+     * router. Over Wi-Fi the connection drops and the app reconnects with the new values.
+     */
+    fun setWifi(newSsid: String, newKey: String) = launchOp("Setting the Wi-Fi") {
+        WifiRules.problem(newSsid, newKey)?.let { throw RouterException(it) }
         antenna(false)
-        if (SetupStep.BACKUP !in _state.value.done) {
-            busy("Saving a backup first")
-            doBackup()
+        val lanIp = (record.access ?: record.factoryAccess)?.lanIp
+        val wanted = RouterAccess(newSsid, newKey, lanIp)
+        store.update(serial, OutboxOp.SaveRecord(serial), OutboxOp.SaveCredentials(serial)) { it!!.copy(pendingAccess = wanted) }
+        sync.flush()
+        try {
+            routerApi.setWifi(newSsid, newKey)
+        } catch (e: RouterUnreachableException) {
+            // The router may reload its Wi-Fi before it answers; reading back below tells.
+        } catch (e: RouterException) {
+            // Nothing changed on the router: forget the pending values again.
+            store.update(serial, OutboxOp.SaveRecord(serial), OutboxOp.SaveCredentials(serial)) { it!!.copy(pendingAccess = null) }
+            throw e
         }
-        val spec = plan.access
-        if (plan.affectsConnection && spec != null) {
-            // Written down before the router changes, so a crash cannot lose the way back in.
-            store.update(serial, OutboxOp.SaveRecord(serial), OutboxOp.SaveCredentials(serial)) { r ->
-                val cur = r!!.access ?: r.factoryAccess
-                r.copy(pendingAccess = RouterAccess(spec.ssid ?: cur?.ssid, spec.wifiKey ?: cur?.wifiKey, spec.lanIp ?: cur?.lanIp))
-            }
-        }
-        val result = TemplateEngine.apply(routerApi.client, plan) { i, n, title -> busy("Applying $title (${i + 1}/$n)") }
-        _state.update { it.copy(applyResult = result) }
-        if (result.ok) {
-            store.update(serial, OutboxOp.SaveRecord(serial)) { it!!.copy(templateId = plan.template.id, templateVersion = plan.template.version) }
-        }
-        if (result.needsReconnect) {
-            busy("Reconnecting with the new settings")
+        if (_state.value.via == Via.WIFI) {
+            busy("Reconnecting with the new Wi-Fi \"$newSsid\"")
             reconnect(maxWaitMs = 3 * 60_000L, firstDelayMs = 8_000)
         }
-        // Read everything again: also checks the values that could not be read back before.
-        val again = TemplateEngine.plan(routerApi.client, plan.template)
-        _state.update { it.copy(plan = again) }
-        if (again.inSync) {
-            markDone(SetupStep.TEMPLATE)
-            _state.update { it.copy(message = "The router matches ${plan.template.title}.") }
+        val kept = routerApi.wifiInterfaces().filter { it.isAccessPoint && it.ssid != newSsid }
+        if (kept.isNotEmpty()) {
+            throw RouterException("The router kept the Wi-Fi name \"${kept.first().ssid}\". Try again.")
+        }
+        store.update(serial, OutboxOp.SaveRecord(serial), OutboxOp.SaveCredentials(serial)) {
+            it!!.copy(access = wanted, pendingAccess = null)
+        }
+        val onServer = sync.flush()
+        markDone(SetupStep.WIFI)
+        _state.update {
+            it.copy(
+                message = "Wi-Fi \"$newSsid\" set. " +
+                    if (onServer) "Name and password are stored on the server." else "Name and password go to the server when the phone is online.",
+            )
         }
     }
 
@@ -569,6 +573,7 @@ class RouterController(
             put("imei", rec.imei)
             put("mac", rec.mac)
             put("firmware", s.device?.firmware ?: rec.firmware)
+            put("wifi_ssid", (rec.access ?: rec.factoryAccess)?.ssid)
             put("template_id", rec.templateId)
             rec.templateVersion?.let { put("template_version", it) }
             put("own_password", !rec.onFactoryPassword)
@@ -613,13 +618,11 @@ class RouterController(
 
     /** Writes the router's Wi-Fi into a microBOX profile (`wifi.ssid`, `wifi.pwd`). */
     fun copyWifiToProfile(profileId: String) = launchOp("Updating the microBOX profile") {
-        val access = record.access ?: record.factoryAccess ?: throw RouterException("The router's Wi-Fi is not known.")
+        val wifi = RouterWifi.of(record) ?: throw RouterException("The router's Wi-Fi is not known.")
         val profile = profiles.get(profileId) ?: throw RouterException("The profile no longer exists.")
-        var config = profile.config
-        config = LuaJson.with(config, "wifi.ssid", JsonPrimitive(access.ssid ?: ""))
-        config = LuaJson.with(config, "wifi.pwd", JsonPrimitive(access.wifiKey ?: ""))
-        profiles.save(profile.copy(config = config))
-        _state.update { it.copy(message = "Profile ${profile.name} now uses the Wi-Fi \"${access.ssid}\".") }
+        val section = wifi.section(profile.config[RouterWifi.SECTION] as? JsonObject)
+        profiles.save(profile.copy(config = LuaJson.with(profile.config, RouterWifi.SECTION, section)))
+        _state.update { it.copy(message = "Profile ${profile.name} now uses the Wi-Fi \"${wifi.ssid}\".") }
     }
 
     /**
@@ -643,12 +646,10 @@ class RouterController(
                 }
             firmware.prune()
         }
-        busy("Fetching configurations")
-        val templates = runCatching { backend.templates(null).also(::cacheTemplates).size }.getOrNull()
         val waiting = store.outbox.value.size
         _state.update {
             it.copy(
-                message = "$refreshed routers updated, $images firmware images and ${templates ?: "no"} configurations on the phone" +
+                message = "$refreshed routers updated, $images firmware images on the phone" +
                     if (waiting > 0) ", $waiting changes wait for the server." else ".",
             )
         }
@@ -702,14 +703,6 @@ class RouterController(
         s.copy(log = s.log.dropLast(1) + last.copy(detail = listOfNotNull(last.detail, text).joinToString(" ")))
     }
 
-    private fun cacheTemplates(list: List<RouterTemplate>) = runCatching {
-        templateCache.writeText(cipher.encrypt(RouterTemplate.json.encodeToString(ListSerializer(RouterTemplate.serializer()), list)))
-    }
-
-    private fun cachedTemplates(): List<RouterTemplate> = runCatching {
-        RouterTemplate.json.decodeFromString(ListSerializer(RouterTemplate.serializer()), cipher.decrypt(templateCache.readText()))
-    }.getOrDefault(emptyList())
-
     private fun newRecord(label: RouterLabel) = RouterRecord(
         serial = label.serial,
         imei = label.imei,
@@ -748,8 +741,23 @@ object MobileChecks {
         val sim = m.simState
         val simOk = sim?.let { s -> !s.contains("not", true) && !s.contains("absent", true) && !s.contains("error", true) }
         val pin = m.pinState
-        val pinOk = pin?.let { p -> p.equals("ok", true) || p.contains("ready", true) || p == "0" }
-        val registered = m.registration?.let { r -> r.contains("regist", true) && !r.contains("not", true) } ?: (m.operator != null)
+        // `pinstate` per the API spec: Inserted | Not ready | Required PIN, X attempts left |
+        // Required PUK, … | Not inserted | SIM failure | Busy | PUK. "Inserted" means unlocked.
+        val pinOk = pin?.trim()?.lowercase()?.let { p ->
+            when {
+                p == "inserted" || p == "ok" || p == "ready" -> true
+                p.contains("required") || p.contains("puk") || p.contains("not") || p.contains("failure") -> false
+                else -> null // e.g. "Busy": unknown for now
+            }
+        }
+        // `netstate`: Not registered | Registered, home | Searching | Denied | Unknown | Roaming.
+        val registered = m.registration?.trim()?.lowercase()?.let { r ->
+            when {
+                r.startsWith("registered") || r == "roaming" -> true
+                r == "unknown" -> null
+                else -> false
+            }
+        } ?: (m.operator != null)
         val signalOk = m.signal.quality.ordinal <= com.progeo.teltonika.api.SignalQuality.FAIR.ordinal
         val mobile = interfaces.filter { i -> i.name.startsWith("mob", true) || i.protocol?.contains("wwan", true) == true || i.protocol == "qmi" || i.protocol == "ncm" }
         val dataOk = if (mobile.isEmpty()) null else mobile.any { it.up == true && it.ipv4 != null }

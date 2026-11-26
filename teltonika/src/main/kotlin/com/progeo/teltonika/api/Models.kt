@@ -2,8 +2,10 @@ package com.progeo.teltonika.api
 
 import com.progeo.teltonika.firmware.FirmwareVersion
 import com.progeo.teltonika.label.RouterLabels
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /** What the router says about itself. Every field may be missing on some firmware version. */
 data class DeviceInfo(
@@ -21,16 +23,30 @@ data class DeviceInfo(
 ) {
     val firmwareVersion: FirmwareVersion? get() = firmware?.let(FirmwareVersion::parse)
 
-    /** `RUT241`, from the model field or the product code. */
+    /**
+     * `RUT241`, from the model field, the product code or, as field names differ between firmware
+     * versions, any text in the answer that names a model (`mnfinfo.name` = `RUT241010000`, …).
+     */
     val modelName: String?
-        get() = model?.let { MODEL.find(it.uppercase())?.value } ?: productCode?.let { MODEL.find(it.uppercase())?.value }
+        get() = model?.let(::modelIn) ?: productCode?.let(::modelIn) ?: anyModelIn(raw)
 
     companion object {
-        private val MODEL = Regex("RUT[A-Z]?\\d{2,3}")
+        /** `RUT241`, `RUT901`, `RUTX11`; not the firmware family `RUT2M`. */
+        private val MODEL = Regex("\\bRUT[A-Z]?\\d{2,3}")
+
+        private fun modelIn(text: String) = MODEL.find(text.uppercase())?.value
+
+        private fun anyModelIn(json: JsonElement): String? = when (json) {
+            is JsonObject -> json.values.firstNotNullOfOrNull(::anyModelIn)
+            is JsonArray -> json.firstNotNullOfOrNull(::anyModelIn)
+            is JsonPrimitive -> if (json.isString) modelIn(json.content) else null
+        }
 
         fun from(json: JsonElement) = DeviceInfo(
             serial = json.find("serial", "serial_num", "serial_number", "sn"),
-            productCode = json.find("product_code", "productcode", "mnf_name", "code"),
+            // In the spec the product code (`RUT241010000`) is `mnfinfo.name`.
+            productCode = json.find("product_code", "productcode", "mnf_name", "code")
+                ?: ((json as? JsonObject)?.get("mnfinfo") as? JsonObject)?.str("name"),
             model = json.find("model", "device_name", "product_name", "devicename"),
             mac = json.find("mac", "lan_mac", "mac_address", "maceth")?.let { RouterLabels.normalizeMac(it) ?: it },
             firmware = json.find("fw_version", "firmware", "firmware_version", "fwversion"),
@@ -146,7 +162,9 @@ data class InterfaceStatus(
             up = o.find("up", "is_up", "status", "state").flag(),
             protocol = o.find("proto", "protocol"),
             device = o.find("device", "l3_device", "ifname"),
-            ipv4 = o.find("ipaddr", "ipv4", "address", "ip"),
+            // `ipv4-address: [{address, mask}]`; a plain search could land on an IPv6 entry.
+            ipv4 = ((o["ipv4-address"] as? JsonArray)?.firstOrNull() as? JsonObject)?.str("address")
+                ?: o.find("ipaddr", "ipv4", "ip"),
             rxBytes = o.find("rx_bytes", "rx").number()?.toLong(),
             txBytes = o.find("tx_bytes", "tx").number()?.toLong(),
             uptimeSeconds = o.find("uptime").number()?.toLong(),

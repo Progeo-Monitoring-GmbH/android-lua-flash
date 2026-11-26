@@ -2,6 +2,7 @@ package com.progeo.teltonika
 
 import com.progeo.teltonika.api.RouterApi
 import com.progeo.teltonika.api.RouterApiException
+import com.progeo.teltonika.api.RouterException
 import com.progeo.teltonika.api.RouterLockedOutException
 import com.progeo.teltonika.api.RouterLoginException
 import com.progeo.teltonika.api.RouterUnreachableException
@@ -9,6 +10,7 @@ import com.progeo.teltonika.api.RutosClient
 import com.progeo.teltonika.api.SignalQuality
 import com.progeo.teltonika.label.Credentials
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -126,11 +128,24 @@ class RutosClientTest {
         login()
         val image = tmp.newFile("fw.bin").apply { writeBytes(ByteArray(300_000) { it.toByte() }) }
         var last = 0L
-        api.uploadFirmware(image) { sent, total -> last = sent; assertEquals(300_000, total) }
+        val uploaded = api.uploadFirmware(image) { sent, total -> last = sent; assertEquals(300_000, total) }
         assertEquals(300_000, last)
         assertTrue(fake.uploadedBytes > 300_000) // multipart framing on top
+        assertEquals("RUT2M_R_00.07.24.8", uploaded.version)
+        assertEquals(null, api.verifyFirmware().problem)
         api.upgradeFirmware(keepSettings = true)
         assertEquals("1", fake.upgradeKeepSettings)
+        assertTrue("POST /api/firmware/actions/verify" in fake.requests)
+    }
+
+    @Test
+    fun `router rejects an image for other hardware`() = runTest {
+        login()
+        fake.firmwareCheck = FakeRutos.section("valid" to "1", "hw_support" to "0", "authorized" to "1")
+        api.uploadFirmware(tmp.newFile("fw.bin").apply { writeBytes(ByteArray(10)) }) { _, _ -> }
+        assertEquals("The router says this firmware does not support its hardware.", api.verifyFirmware().problem)
+        api.deleteUploadedFirmware()
+        assertEquals(0, fake.uploadedBytes)
     }
 
     @Test
@@ -145,6 +160,29 @@ class RutosClientTest {
     fun `backup download`() = runTest {
         login()
         assertContentEquals(FakeRutos.BACKUP, api.backup())
+    }
+
+    @Test
+    fun `new Wi-Fi name and password on the access point only`() = runTest {
+        login()
+        val changed = api.setWifi("ProGeo-Site7", "Secret-1234")
+        assertEquals(listOf("default_radio0", "guest"), changed.map { it.id })
+        val ap = fake.wifi.getValue("default_radio0")
+        assertEquals("ProGeo-Site7", ap["ssid"]!!.jsonPrimitive.content)
+        assertEquals("Secret-1234", ap["key"]!!.jsonPrimitive.content)
+        assertEquals("sae-mixed", ap["encryption"]!!.jsonPrimitive.content) // kept
+        assertEquals("wpa2", fake.wifi.getValue("guest")["encryption"]!!.jsonPrimitive.content) // open → WPA2
+        assertEquals("Office", fake.wifi.getValue("wifi_client")["ssid"]!!.jsonPrimitive.content)
+        assertTrue(api.wifiInterfaces().filter { it.isAccessPoint }.all { it.ssid == "ProGeo-Site7" })
+    }
+
+    @Test
+    fun `bad Wi-Fi values are refused before the router is touched`() = runTest {
+        login()
+        assertFailsWith<RouterException> { api.setWifi("Site", "short") }
+        assertFailsWith<RouterException> { api.setWifi(" ", "Secret-1234") }
+        assertFailsWith<RouterException> { api.setWifi("Site", "Schlüssel-123") }
+        assertTrue(fake.requests.none { it.startsWith("PUT /api/wireless") })
     }
 
     @Test

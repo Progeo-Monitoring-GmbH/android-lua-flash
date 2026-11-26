@@ -1,6 +1,9 @@
 package com.progeo.luaflasher.ui.config
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -66,6 +69,7 @@ import com.progeo.luaflasher.core.config.FieldKind
 import com.progeo.luaflasher.core.config.LuaJson
 import com.progeo.luaflasher.core.config.LuaValue
 import com.progeo.luaflasher.core.config.Severity
+import com.progeo.luaflasher.router.RouterWifi
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -134,6 +138,7 @@ private fun shown(path: String, key: String, value: JsonElement): String = when 
  * @param config what the cards show and the dialogs start from.
  * @param onSetSection a section was saved (null: removed).
  * @param hiddenPaths values edited elsewhere on the screen; [hiddenNote] says where.
+ * @param routerWifis routers on the phone: the wifi card takes name and password from one of them.
  */
 @Composable
 fun ConfigSectionCards(
@@ -144,9 +149,11 @@ fun ConfigSectionCards(
     sections: List<String> = config.entries.filter { it.value is JsonObject }.map { it.key },
     hiddenPaths: Set<String> = emptySet(),
     hiddenNote: String? = null,
+    routerWifis: List<RouterWifi> = emptyList(),
 ) {
     val pager = rememberPagerState { sections.size }
     var editing by remember { mutableStateOf<String?>(null) }
+    var pickRouter by remember { mutableStateOf(false) }
     var scrollTo by remember { mutableStateOf<String?>(null) }
     // Measured height of each card, so the pager is as high as the card on screen.
     val heights = remember { mutableStateMapOf<String, Int>() }
@@ -193,6 +200,7 @@ fun ConfigSectionCards(
             issues = issues.filter { it.path.startsWith("$name.") },
             onEdit = { editing = name },
             onRemove = if (name == ROUTER) ({ onSetSection(ROUTER, null) }) else null,
+            onFromRouter = if (name == RouterWifi.SECTION && routerWifis.isNotEmpty()) ({ pickRouter = true }) else null,
             modifier = Modifier
                 // measured at its own height, not squeezed to the pager's
                 .wrapContentHeight(Alignment.Top, unbounded = true)
@@ -224,6 +232,17 @@ fun ConfigSectionCards(
         }
     }
 
+    if (pickRouter) {
+        RouterWifiDialog(
+            routers = routerWifis,
+            onDismiss = { pickRouter = false },
+            onPick = { wifi ->
+                pickRouter = false
+                onSetSection(RouterWifi.SECTION, wifi.section(config[RouterWifi.SECTION] as? JsonObject))
+            },
+        )
+    }
+
     editing?.let { name ->
         val values = config[name] as? JsonObject
         SectionDialog(
@@ -249,6 +268,7 @@ private fun SectionCard(
     issues: List<ConfigIssue>,
     onEdit: () -> Unit,
     onRemove: (() -> Unit)?,
+    onFromRouter: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     Card(modifier.fillMaxWidth()) {
@@ -256,6 +276,7 @@ private fun SectionCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 if (onRemove != null) IconButton(onClick = onRemove) { Icon(Icons.Default.Delete, contentDescription = "Remove $name") }
+                if (onFromRouter != null) IconButton(onClick = onFromRouter) { Icon(Icons.Default.Router, contentDescription = "Wi-Fi from a router") }
                 IconButton(onClick = onEdit) { Icon(Icons.Default.Edit, contentDescription = "Edit $name") }
             }
             if (values.isEmpty()) {
@@ -282,6 +303,35 @@ private fun SectionCard(
             }
         }
     }
+}
+
+/** The routers on the phone with their Wi-Fi; one tap puts name and password into the wifi section. */
+@Composable
+private fun RouterWifiDialog(routers: List<RouterWifi>, onDismiss: () -> Unit, onPick: (RouterWifi) -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Wi-Fi from which router?") },
+        text = {
+            LazyColumn {
+                items(routers, key = { it.serial }) { r ->
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick(r) }
+                            .padding(vertical = 10.dp),
+                    ) {
+                        Text(r.ssid, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            r.label + (if (r.factory) " · factory Wi-Fi" else "") + (if (r.key == null) " · open" else ""),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 /** A minimal dialog with the inputs of one section; empty inputs leave the value out. */

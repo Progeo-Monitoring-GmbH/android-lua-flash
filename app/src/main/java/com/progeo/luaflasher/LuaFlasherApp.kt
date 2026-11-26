@@ -84,7 +84,6 @@ class AppGraph(context: Context) {
         settings = settings,
         profiles = profiles,
         http = http,
-        templateCache = File(context.noBackupFilesDir, "router-templates.bin"),
         cipher = routerCipher,
         backupDir = File(context.noBackupFilesDir, "router-backups"),
     )
