@@ -35,7 +35,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    // The app is English; progeo-core also ships German texts (manuSensor), which would mix in on German phones.
+    // The app is English; progeo-core also ships the other languages of manuSensor, which would mix in on such phones.
     androidResources {
         localeFilters += listOf("en")
     }

@@ -5,7 +5,7 @@ coroutines = "1.10.2"
 serialization = "1.9.0"
 tink = "1.17.0"
 # Shared ProGeo library (own repository, GitHub Packages): see README.
-progeoCore = "1.0.0"
+progeoCore = "1.2.0"
 composeBom = "2025.06.00"
 activityCompose = "1.10.1"
 lifecycle = "2.9.1"
