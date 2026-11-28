@@ -16,10 +16,12 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     override suspend fun doWork(): Result {
         val graph = applicationContext.graph
         // Never compete with a running flash for CPU or storage.
-        if (graph.flash.isActive) return Result.retry()
+        if (graph.flash.isActive || graph.m5.isActive) return Result.retry()
         // Routers: send what waited for the network (passwords, backups, reports).
         val routersSent = graph.routerSync.flush()
-        return if (graph.sync.sync().isSuccess && routersSent) Result.success() else Result.retry()
+        val lua = graph.sync.sync().isSuccess
+        val m5 = graph.syncM5().isSuccess
+        return if (lua && m5 && routersSent) Result.success() else Result.retry()
     }
 
     companion object {

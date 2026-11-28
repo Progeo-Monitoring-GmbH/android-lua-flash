@@ -31,6 +31,8 @@ import com.progeo.luaflasher.R
 import com.progeo.luaflasher.ui.bundles.BundlesScreen
 import com.progeo.luaflasher.ui.flash.FlashScreen
 import com.progeo.luaflasher.ui.home.HomeScreen
+import com.progeo.luaflasher.ui.m5.M5ProfileScreen
+import com.progeo.luaflasher.ui.m5.M5ReadScreen
 import com.progeo.luaflasher.ui.monitor.MonitorScreen
 import com.progeo.luaflasher.ui.profiles.ProfileEditorScreen
 import com.progeo.luaflasher.ui.profiles.ProfilesScreen
@@ -95,6 +97,8 @@ fun AppNavigation() {
                     onScan = { nav.navigate("profile/new") },
                     onRead = { nav.navigate("read") },
                     onFlash = { id -> nav.navigate("flash?profile=$id") },
+                    onOpenM5 = { id -> nav.navigate("m5/$id") },
+                    onReadM5 = { nav.navigate("m5-read") },
                 )
             }
             composable("profile/{id}") { e ->
@@ -102,6 +106,14 @@ fun AppNavigation() {
                     id = e.arguments?.getString("id")?.takeIf { it != "new" },
                     onDone = { nav.popBackStack() },
                     onFlash = { id -> nav.navigate("flash?profile=$id") { popUpTo(Tab.PROFILES.route) } },
+                    onM5 = { id -> nav.navigate("m5/$id") { popUpTo(Tab.PROFILES.route) } },
+                )
+            }
+            composable("m5/{id}") { e -> M5ProfileScreen(id = e.arguments?.getString("id").orEmpty(), onBack = { nav.popBackStack() }) }
+            composable("m5-read") {
+                M5ReadScreen(
+                    onBack = { nav.popBackStack() },
+                    onSaved = { id -> nav.navigate("m5/$id") { popUpTo(Tab.PROFILES.route) } },
                 )
             }
             composable("read") {

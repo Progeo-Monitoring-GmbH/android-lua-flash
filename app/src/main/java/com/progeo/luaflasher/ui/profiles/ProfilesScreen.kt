@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import com.progeo.luaflasher.core.config.LuaJson
 import com.progeo.luaflasher.data.Profile
 import com.progeo.luaflasher.graph
+import com.progeo.luaflasher.m5.M5Source
 import com.progeo.luaflasher.ui.SwipeToDelete
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
@@ -49,11 +50,19 @@ import kotlinx.serialization.json.JsonPrimitive
  * ([onScan]: the editor opens with the scanner) or read from a board over USB ([onRead]).
  */
 @Composable
-fun ProfilesScreen(onEdit: (String) -> Unit, onScan: () -> Unit, onRead: () -> Unit, onFlash: (String) -> Unit) {
+fun ProfilesScreen(
+    onEdit: (String) -> Unit,
+    onScan: () -> Unit,
+    onRead: () -> Unit,
+    onFlash: (String) -> Unit,
+    onOpenM5: (String) -> Unit,
+    onReadM5: () -> Unit,
+) {
     val context = LocalContext.current
     val graph = context.graph
     val scope = rememberCoroutineScope()
     val profiles by graph.profiles.profiles.collectAsState()
+    val m5Profiles by graph.m5Profiles.profiles.collectAsState()
     var confirmDelete by remember { mutableStateOf<Profile?>(null) }
 
     Box(Modifier.fillMaxSize()) {
@@ -66,7 +75,8 @@ fun ProfilesScreen(onEdit: (String) -> Unit, onScan: () -> Unit, onRead: () -> U
             item {
                 Text(
                     "A profile is a complete device_config.lua, named after its device hash. Scan it from a config QR code " +
-                        "or read it from a controller over USB; then every value can be edited. Profiles are encrypted on the phone.",
+                        "or read it from a controller over USB; then every value can be edited. The QR code of an M5Stack " +
+                        "(config.py) is recognised and listed under M5Stack. Profiles are encrypted on the phone.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -83,6 +93,41 @@ fun ProfilesScreen(onEdit: (String) -> Unit, onScan: () -> Unit, onRead: () -> U
                         Text("Read from controller")
                     }
                 }
+            }
+            item {
+                TextButton(onClick = onReadM5) {
+                    Icon(Icons.Default.Usb, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Read from M5Stack")
+                }
+            }
+            if (m5Profiles.isNotEmpty()) {
+                item { Text("M5Stack", style = MaterialTheme.typography.titleMedium) }
+                items(m5Profiles, key = { "m5-" + it.id }) { p ->
+                    Card(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenM5(p.id) },
+                    ) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text(p.name, style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                listOfNotNull(
+                                    p.config.projectId?.let { "project $it" },
+                                    p.config.model,
+                                    if (p.config.rs485Enabled) "RS485" else null,
+                                ).joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Text(
+                                (if (p.source == M5Source.QR) "config QR code" else "read from M5") + " · ${p.savedAt.take(16).replace('T', ' ')}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                }
+                item { Text("Controllers (LUA)", style = MaterialTheme.typography.titleMedium) }
             }
             if (profiles.isEmpty()) item { Text("No profiles yet. Scan a config QR code or read one from a controller.") }
             if (profiles.isNotEmpty()) item { Text("Swipe a profile sideways to delete it.", style = MaterialTheme.typography.bodySmall) }

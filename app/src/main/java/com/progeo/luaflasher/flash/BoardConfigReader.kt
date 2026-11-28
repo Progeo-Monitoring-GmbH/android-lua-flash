@@ -25,6 +25,7 @@ class BoardConfigReader(private val usb: UsbSerialManager, private val session: 
 
     suspend fun read(onStatus: (String) -> Unit = {}): JsonObject {
         if (session.isActive) throw FlasherException("A flash job holds the USB port. Finish or cancel it first.")
+        if (session.portBusy()) throw FlasherException("An M5 job holds the USB port. Wait until it has finished.")
         onStatus("Connecting to the USB adapter…")
         val device = usb.firstDevice()
         usb.requestPermission(device)

@@ -55,11 +55,15 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.progeo.core.qr.CodeScanDialog
 import com.progeo.core.ui.MessageCard
 import com.progeo.core.ui.copyToClipboard
 import com.progeo.luaflasher.AppGraph
+import com.progeo.luaflasher.core.FlasherException
+import com.progeo.luaflasher.core.m5.M5Config
+import com.progeo.luaflasher.m5.M5Source
 import com.progeo.luaflasher.core.config.ConfigCode
 import com.progeo.luaflasher.core.config.ConfigTemplate
 import com.progeo.luaflasher.core.config.ConfigValidator
@@ -157,6 +161,22 @@ class ProfileEditorViewModel : ViewModel() {
     var scanResult by mutableStateOf<Pair<String, Boolean>?>(null)
         private set
 
+    /**
+     * An M5Stack config code (the backend's M5 QR code, a config.py): it is stored as an M5 profile
+     * and [onSaved] opens it. Returns false for every other code.
+     */
+    fun scannedM5(graph: AppGraph, text: String, onSaved: (String) -> Unit): Boolean {
+        if (!M5Config.looksLike(text)) return false
+        scanning = false
+        try {
+            val m5 = M5Config.parseValid(text)
+            viewModelScope.launch { onSaved(graph.m5Profiles.saveConfig(m5, M5Source.QR).id) }
+        } catch (e: FlasherException) {
+            scanResult = "This is an M5Stack config, but it cannot be used: ${e.userMessage}" to true
+        }
+        return true
+    }
+
     /** A valid config in the code is added to the profile: its values replace those it sets. */
     fun scanned(text: String) {
         scanning = false
@@ -192,7 +212,7 @@ private val prettyJson = Json { prettyPrint = true }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Unit) {
+fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Unit, onM5: (String) -> Unit) {
     val context = LocalContext.current
     val graph = context.graph
     val vm: ProfileEditorViewModel = viewModel(key = "profile-$id")
@@ -343,11 +363,13 @@ fun ProfileEditorScreen(id: String?, onDone: () -> Unit, onFlash: (String) -> Un
                 if (isNew && !vm.hasScan) onDone()
             },
             onCode = {
-                vm.scanned(it)
-                tab = 0 // the result shows on the Values tab
+                if (!vm.scannedM5(graph, it, onM5)) {
+                    vm.scanned(it)
+                    tab = 0 // the result shows on the Values tab
+                }
             },
             title = "Scan a config QR code",
-            hint = "Hold the QR code with the device config (Lua or JSON) inside the frame.",
+            hint = "Hold the QR code with the device config (Lua, JSON or M5Stack config.py) inside the frame.",
         )
     }
 }

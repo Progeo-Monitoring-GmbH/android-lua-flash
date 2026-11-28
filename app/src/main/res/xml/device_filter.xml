@@ -9,4 +9,6 @@
     <usb-device vendor-id="1027" />
     <!-- Prolific PL2303 (0x067B) -->
     <usb-device vendor-id="1659" />
+    <!-- Espressif native USB (0x303A): M5Stack CoreS3 (ESP32-S3), CDC-ACM -->
+    <usb-device vendor-id="12346" />
 </resources>

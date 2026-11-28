@@ -37,6 +37,7 @@ data class SerialDevice(val driver: UsbSerialDriver) {
                 0x1A86 -> "CH340"
                 0x0403 -> "FTDI"
                 0x067B -> "PL2303"
+                0x303A -> "ESP32 USB"
                 else -> driver.javaClass.simpleName.removeSuffix("SerialDriver")
             }
             return "$chip (%04X:%04X)".format(device.vendorId, device.productId)
@@ -69,7 +70,7 @@ class UsbSerialManager(private val context: Context) {
     }
 
     fun refresh() {
-        val known = setOf(0x10C4, 0x1A86, 0x0403, 0x067B)
+        val known = setOf(0x10C4, 0x1A86, 0x0403, 0x067B, 0x303A)
         _devices.value = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
             .map { SerialDevice(it) }
             .sortedBy { if (it.device.vendorId in known) 0 else 1 }

@@ -99,6 +99,9 @@ class FlashSession(
 
     val isActive: Boolean get() = _state.value != FlashState.Idle
 
+    /** Another job holds the USB port (the M5 session); set by the app graph. */
+    var portBusy: () -> Boolean = { false }
+
     /** The bundle id of the running job, for the UI. */
     val bundleId: String? get() = job?.bundleId
 
@@ -120,6 +123,7 @@ class FlashSession(
      */
     suspend fun start(job: FlashJob, device: SerialDevice) {
         check(!_state.value.isWorking) { "a flash is running" }
+        if (portBusy()) throw FlasherException("An M5 job holds the USB port. Wait until it has finished.")
         close()
         logBuffer.setLength(0)
         _log.value = ""

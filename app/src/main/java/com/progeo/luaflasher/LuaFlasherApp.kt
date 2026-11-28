@@ -18,6 +18,9 @@ import com.progeo.luaflasher.data.SyncRepository
 import com.progeo.luaflasher.data.SyncWorker
 import com.progeo.luaflasher.flash.BoardConfigReader
 import com.progeo.luaflasher.flash.FlashSession
+import com.progeo.luaflasher.m5.M5FirmwareStore
+import com.progeo.luaflasher.m5.M5ProfileStore
+import com.progeo.luaflasher.m5.M5Session
 import com.progeo.luaflasher.router.RouterBackend
 import com.progeo.luaflasher.router.RouterController
 import com.progeo.luaflasher.router.RouterFirmwareStore
@@ -37,7 +40,15 @@ class AppGraph(context: Context) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val settings = SettingsRepository(context)
     val publicKeys: PublicKeys = PublicKeys.parse(context.assets.open("firmware-signing.pub.json").use { String(it.readBytes()) })
-    val verifier = SignatureVerifier(publicKeys)
+
+    /**
+     * LUA_WLAN bundles and router firmware: every key except the M5 pipeline keys (`mstack-*`). Those sit
+     * in the m5-stack CI, so they may only ever vouch for M5 releases.
+     */
+    val verifier = SignatureVerifier(PublicKeys(publicKeys.keys.filterKeys { !it.startsWith(M5_KEY_PREFIX) }))
+
+    /** M5 releases (mstack channel): every key. */
+    private val m5Verifier = SignatureVerifier(publicKeys)
 
     // No CookieJar: the backend authenticates with the bearer header only (API.md).
     private val http = OkHttpClient.Builder()
@@ -60,6 +71,14 @@ class AppGraph(context: Context) {
     val usb = UsbSerialManager(context)
     val flash = FlashSession(context, bundles, usb, settings)
     val boardReader = BoardConfigReader(usb, flash)
+
+    // M5Stack with the MicroPython firmware: profiles from its config QR code, releases from the mstack channel.
+    val m5Profiles = M5ProfileStore(File(context.filesDir, "m5-profiles.json"), SecretCipher("profile-secrets"))
+    val m5Firmware = M5FirmwareStore(http, m5Verifier, File(context.filesDir, "m5-firmware"), BuildConfig.VERSION_CODE)
+    val m5 = M5Session(appScope, usb, flash, m5Firmware, m5Profiles).also { session -> flash.portBusy = { session.isActive } }
+
+    /** Syncs the M5 releases with the current firmware base URL. */
+    suspend fun syncM5(): Result<Unit> = m5Firmware.sync(settings.current().baseUrl)
 
     @Volatile
     var backendUrl: String = AppSettings.DEFAULT_BACKEND_URL
@@ -92,6 +111,11 @@ class AppGraph(context: Context) {
         appScope.launch { settings.settings.collect { backendUrl = it.backendUrl } }
     }
 
+    companion object {
+        /** Key IDs of the M5 release pipeline (keys/firmware-signing.pub.json). */
+        const val M5_KEY_PREFIX = "mstack-"
+    }
+
     /** The template of the newest bundle on the phone, else the built-in copy. */
     suspend fun currentTemplate(): ConfigTemplate {
         val newest = bundles.bundles.value.maxByOrNull { it.created ?: "" }
@@ -109,11 +133,14 @@ class LuaFlasherApp : Application() {
         graph = AppGraph(this)
         graph.appScope.launch {
             graph.profiles.load()
+            graph.m5Profiles.load()
+            graph.m5Firmware.loadCached()
             graph.routerStore.load()
             graph.router.firmware.loadCached()
             graph.sync.loadCached()
             // Sync on app start; offline this just fails quietly and the cache stays in use.
             graph.sync.sync()
+            graph.syncM5()
         }
         SyncWorker.schedule(this)
     }
